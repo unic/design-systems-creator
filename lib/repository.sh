@@ -102,7 +102,7 @@ ignoredBuiltDependencies:
 # Block installation of package versions published within a cooldown period
 # Give the community time to detect and remove malicious packages before they reach your environment.
 # 1440 minutes = 24h = 1 day
-minimumReleaseAge: 0
+minimumReleaseAge: 1440
 
 # Shai-hulud 1: detected in 2.5 hours
 # Shai-hulud 2: detected in 12 hours
