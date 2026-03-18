@@ -22,9 +22,6 @@ NODE_LTS_VERSION="24"
 PNPM_VERSION="10.23.0"
 
 # Script directory for template access
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATES_DIR="${SCRIPT_DIR}/../templates"
-
 log_info() {
 	echo -e "${BLUE}[INFO]${NC} $1"
 }

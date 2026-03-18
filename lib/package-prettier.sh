@@ -7,10 +7,10 @@
 
 create_prettier_config_package() {
 	log_info "Creating @repo/prettier-config package..."
-	cd "$TARGET_FOLDER/packages"
+	cd "$TARGET_FOLDER/packages" || exit
 
 	mkdir -p prettier-config
-	cd prettier-config
+	cd prettier-config || exit
 
 	NPM_CONFIG_INIT_LICENSE="LGPL-3.0-or-later" \
 		NPM_CONFIG_INIT_AUTHOR_NAME="${DEVELOPER}" \
@@ -29,7 +29,7 @@ create_prettier_config_package() {
 
 add_prettier_base_config() {
 	log_info "Adding base Prettier configuration..."
-	cd "$TARGET_FOLDER/packages/prettier-config"
+	cd "$TARGET_FOLDER/packages/prettier-config" || exit
 
 	cat > base.js <<'EOF'
 /**
@@ -70,7 +70,7 @@ EOF
 
 add_prettier_config_readme() {
 	log_info "Creating README.md..."
-	cd "$TARGET_FOLDER/packages/prettier-config"
+	cd "$TARGET_FOLDER/packages/prettier-config" || exit
 
 	cat > README.md <<'EOF'
 # `@repo/prettier-config`

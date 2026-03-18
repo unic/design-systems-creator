@@ -21,19 +21,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/../lib"
 
-BASEDIR="$(pwd)"
-RENDERING_FOLDER_NAME="rendering"
-TARGET_FOLDER="$BASEDIR/$RENDERING_FOLDER_NAME"
-
 # Source all library modules
+# shellcheck disable=SC1091
 source "$LIB_DIR/utils.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/prerequisites.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/repository.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/configuration.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/package-prettier.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/package-design-tokens.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/package-storybook.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/dependencies.sh"
+# shellcheck disable=SC1091
 source "$LIB_DIR/finalization.sh"
 
 # =============================================================================

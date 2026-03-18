@@ -1,6 +1,7 @@
+# shellcheck shell=bash
 define_catalog() {
 	log_info "Defining pnpm workspace catalog..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	# Step 1: Collect all unique dependencies from ALL packages (including root, excluding workspace: refs)
 	log_info "Step 1: Collecting all dependencies from all packages..."
@@ -15,7 +16,8 @@ define_catalog() {
 	while read -r package_name; do
 		if [ -n "$package_name" ]; then
 			log_info "  Resolving $package_name..."
-			local version=$(get_latest_version "$package_name")
+			local version
+		version=$(get_latest_version "$package_name")
 			if [ -n "$version" ]; then
 				add_to_catalog "$package_name" "$version"
 				log_info "    Added $package_name@$version to catalog"
@@ -31,14 +33,16 @@ define_catalog() {
 	log_info "Step 3: Updating workspace packages to use catalog: protocol..."
 
 	find . -name "package.json" -not -path "*/node_modules/*" | while read -r pkg_path; do
-		local pkg_dir=$(dirname "$pkg_path")
+		local pkg_dir
+		pkg_dir=$(dirname "$pkg_path")
 
 		# Skip root package (root keeps exact versions, workspace packages use catalog:)
 		if [ "$pkg_dir" = "." ]; then
 			continue
 		fi
 
-		local pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
+		local pkg_name
+		pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
 		[ -z "$pkg_name" ] && pkg_name="unknown"
 
 		log_info "Updating package: $pkg_name"
@@ -70,9 +74,10 @@ define_catalog() {
 
 standardize_packages() {
 	log_info "Standardizing package.json files across workspace..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
-	local package_manager="pnpm@$(pnpm -v)"
+	local package_manager
+	package_manager="pnpm@$(pnpm -v)"
 
 	if [ -z "$package_manager" ]; then
 		log_warning "No packageManager field found in root package.json"
@@ -87,8 +92,10 @@ standardize_packages() {
 
 	# Find all package.json files (including root, excluding node_modules)
 	find . -name "package.json" -not -path "*/node_modules/*" | while read -r pkg_path; do
-		local pkg_dir=$(dirname "$pkg_path")
-		local pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
+		local pkg_dir
+		pkg_dir=$(dirname "$pkg_path")
+		local pkg_name
+		pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
 		[ -z "$pkg_name" ] && pkg_name="unknown"
 
 		# Check if this is the root package

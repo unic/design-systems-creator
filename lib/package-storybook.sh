@@ -18,7 +18,7 @@
 init_storybook_with_cli() {
 	log_info "Initializing Storybook using CLI..."
 	mkdir -p "$TARGET_FOLDER/apps/storybook-react"
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	# Initialize Storybook - CLI creates main.ts, preview.ts with defaults
 	# --skip-install: We'll install later with pnpm
@@ -45,6 +45,7 @@ init_storybook_with_cli() {
 		return 1
 	fi
 
+	# shellcheck disable=SC2317,SC2154
 	pnpm pkg set \
 		"license=LGPL-3.0-or-later" \
 		"author=$DEVELOPER" \
@@ -72,7 +73,7 @@ install_storybook_addons_via_cli() {
 	# Use CLI to add addons - this auto-registers them in main.ts
 	# This is the recommended way per addon documentation
 	log_info "Adding Storybook addons via CLI (auto-configures main.ts)..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	local addons=(
 		"@storybook/addon-interactions"
@@ -95,7 +96,7 @@ install_storybook_addons_via_cli() {
 
 finalize_storybook_package_json() {
 	log_info "Finalizing Storybook package.json scripts..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	# Ensure correct scripts are set (may override CLI defaults)
 	jq '.scripts = {
@@ -122,7 +123,7 @@ customize_storybook_preview_ts() {
 	# - Theme decorator configuration
 	# - Custom parameters (a11y, tagBadges, etc.)
 	log_info "Customizing preview.ts with monorepo configuration..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > .storybook/preview.ts <<'EOF'
 import type { Preview } from '@storybook/react'
@@ -238,7 +239,7 @@ EOF
 add_storybook_vitest_setup() {
 	# Add vitest setup for portable stories testing
 	log_info "Adding Vitest setup..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > .storybook/vitest.setup.ts <<'EOF'
 import { setProjectAnnotations } from '@storybook/react'
@@ -253,7 +254,7 @@ EOF
 
 add_storybook_vitest_config() {
 	log_info "Adding Vitest configuration for Storybook..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > vitest.config.ts <<'EOF'
 import { defineConfig, mergeConfig } from 'vitest/config'
@@ -311,7 +312,7 @@ EOF
 
 add_storybook_styles() {
 	log_info "Adding Storybook global styles..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	mkdir -p styles
 
@@ -370,7 +371,7 @@ EOF
 
 add_storybook_sample_stories() {
 	log_info "Adding sample stories..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	mkdir -p src/stories
 
@@ -638,7 +639,7 @@ STORY_EOF
 
 add_storybook_tsconfig() {
 	log_info "Adding TypeScript configuration for Storybook..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > tsconfig.json <<'EOF'
 {
@@ -675,7 +676,7 @@ EOF
 
 add_storybook_eslint_config() {
 	log_info "Adding ESLint configuration for Storybook..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > eslint.config.mjs <<'EOF'
 // For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
@@ -703,7 +704,7 @@ EOF
 
 add_storybook_msw_handlers() {
 	log_info "Adding MSW handlers..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	mkdir -p mocks public
 
@@ -760,7 +761,7 @@ EOF
 
 add_storybook_readme() {
 	log_info "Creating Storybook README..."
-	cd "$TARGET_FOLDER/apps/storybook-react"
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
 	cat > README.md <<'EOF'
 # @repo/storybook-react

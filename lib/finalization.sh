@@ -1,6 +1,7 @@
+# shellcheck shell=bash
 create_vercel_json() {
 	log_info "Creating vercel.json..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	cat > vercel.json <<'EOF'
 {
@@ -21,7 +22,7 @@ EOF
 copy_helper_scripts() {
 	log_info "Copying helper scripts..."
 
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 	mkdir -p scripts
 
 	if [ -f "$SCRIPT_DIR/add-dependency.sh" ]; then
@@ -35,7 +36,7 @@ copy_helper_scripts() {
 
 setup_vscode() {
 	log_info "Setting up VSCode..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	mkdir -p .vscode
 	cat > .vscode/settings.json <<'EOF'
@@ -81,7 +82,7 @@ EOF
 
 document_dependency_management() {
 	log_info "Documenting dependency management approach in README.md..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	cat >> README.md <<'EOF'
 
@@ -208,7 +209,7 @@ EOF
 
 install_dependencies() {
 	log_info "Installing dependencies with pnpm..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	# Clean up any existing node_modules and lockfile to ensure fresh install with exact versions
 	log_info "Cleaning up existing node_modules and lockfile..."

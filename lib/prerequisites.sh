@@ -39,6 +39,7 @@ check_pnpm() {
 		if [[ -n "$shell_rc" && -f "$shell_rc" ]]; then
 			log_info "Sourcing $shell_rc to update PATH..."
 			# Use || true to prevent script exit on rc file errors
+			# shellcheck disable=SC1090
 			source "$shell_rc" || true
 		else
 			log_warning "Could not detect shell configuration file. You may need to restart your shell or add pnpm to your PATH manually."
@@ -60,7 +61,7 @@ check_pnpm() {
 
 	PNPM_VERSION=$(pnpm --version)
 
-	log_success "pnpm $(PNPM_VERSION) ready."
+	log_success "pnpm $PNPM_VERSION ready."
 }
 
 check_yq() {

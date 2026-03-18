@@ -8,11 +8,11 @@
 # Setup Turbo monorepo with pnpm
 init_repo() {
 	log_info "Creating a new Turbo monorepo in ${TARGET_FOLDER}..."
-	cd "$BASEDIR"
+	cd "$BASEDIR" || exit
 
 	pnpm dlx create-turbo@latest "$TARGET_FOLDER" -m pnpm --skip-install -e "with-tailwind"
 
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 	rm -rf apps/docs
 
 	# Update packageManager and engines in root package.json
@@ -25,7 +25,7 @@ init_repo() {
 # Rename @repo/ui to @repo/ui-react for framework-specific naming convention
 rename_ui_package() {
 	log_info "Renaming @repo/ui to @repo/ui-react..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	# Step 1: Rename the directory
 	if [ -d "packages/ui" ]; then
@@ -67,7 +67,7 @@ rename_ui_package() {
 
 setup_workspace() {
 	log_info "Appending workspace setup..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	cat >> pnpm-workspace.yaml <<'EOF'
 
@@ -146,7 +146,7 @@ EOF
 
 setup_npmrc() {
 	log_info "Creating .npmrc configuration..."
-	cd "$TARGET_FOLDER"
+	cd "$TARGET_FOLDER" || exit
 
 	cat > .npmrc <<'EOF'
 auto-install-peers = true

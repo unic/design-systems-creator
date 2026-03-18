@@ -128,8 +128,9 @@ check_jq() {
 # Get list of available packages/apps in the workspace
 get_available_targets() {
 	find "$WORKSPACE_ROOT" -name "package.json" -not -path "*/node_modules/*" | while read -r pkg_file; do
-		local pkg_dir=$(dirname "$pkg_file")
-		local rel_path="${pkg_dir#$WORKSPACE_ROOT/}"
+		local pkg_dir
+		pkg_dir=$(dirname "$pkg_file")
+		local rel_path="${pkg_dir#"$WORKSPACE_ROOT"/}"
 		# Skip root package
 		if [[ "$rel_path" != "." && "$rel_path" != "" ]]; then
 			echo "$rel_path"
@@ -206,7 +207,7 @@ add_to_package() {
 
 	log_info "Adding $pkg_name to $target as $type dependency..."
 
-	(cd "$target_dir" && pnpm add $pnpm_flags "${pkg_name}@catalog:")
+	(cd "$target_dir" && pnpm add "$pnpm_flags" "${pkg_name}@catalog:")
 
 	log_success "Added $pkg_name to $target"
 }

@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 
 BASEDIR="$(pwd)"
 RENDERING_FOLDER_NAME="rendering"
+# shellcheck disable=SC2034
 TARGET_FOLDER="$BASEDIR/$RENDERING_FOLDER_NAME"
 
 log_section() {
@@ -55,8 +56,6 @@ Examples:
   $(basename "$0") --project-name my-ds --organization my-org
 
 EOF
-
-	exit 0
 }
 
 print_banner() {
@@ -116,6 +115,7 @@ parse_arguments() {
 		show_usage
 		exit 1
 	else
+		# shellcheck disable=SC2034
 		TARGET_FOLDER="$BASEDIR/$PROJECT_NAME"
 	fi
 
@@ -135,6 +135,7 @@ get_author_name() {
 	for part in "${name_parts[@]}"; do
 		author_name_temp+="${part^} "
 	done
+	# shellcheck disable=SC2034
 	DEVELOPER="${author_name_temp::-1}, Unic AG"
 }
 
@@ -153,6 +154,7 @@ get_package_deps() {
 	fi
 
 	# Define the jq filter once
+	# shellcheck disable=SC2016
 	local jq_filter='
 		if .[$dep_type] then
 			.[$dep_type] | to_entries[] | select(.value | startswith("workspace:") | not) | .key
@@ -178,11 +180,13 @@ get_package_deps() {
 update_package_to_catalog() {
 	local dep_type="$1"
 	local pkg_path="$2"
+	# shellcheck disable=SC2034
 	local pkg_dir="$3"
 	local pkg_name="$4"
 
 	# Get dependencies for this package (excluding workspace: deps)
-	local deps=$(get_package_deps "$dep_type" "$pkg_path")
+	local deps
+	deps=$(get_package_deps "$dep_type" "$pkg_path")
 
 	# Only proceed if we have dependencies
 	if [ -n "$deps" ]; then

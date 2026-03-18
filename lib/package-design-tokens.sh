@@ -7,10 +7,10 @@
 
 create_design_tokens_package() {
 	log_info "Creating @repo/design-tokens package..."
-	cd "$TARGET_FOLDER/packages"
+	cd "$TARGET_FOLDER/packages" || exit
 
 	mkdir -p design-tokens
-	cd design-tokens
+	cd design-tokens || exit
 
 	NPM_CONFIG_INIT_LICENSE="LGPL-3.0-or-later" \
 		NPM_CONFIG_INIT_AUTHOR_NAME="${DEVELOPER}" \
@@ -56,7 +56,7 @@ create_design_tokens_package() {
 
 add_design_tokens_config() {
 	log_info "Adding Style Dictionary configuration..."
-	cd "$TARGET_FOLDER/packages/design-tokens"
+	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	# Create Style Dictionary config for DTCG format
 	cat > sd.config.js <<'EOF'
@@ -253,7 +253,7 @@ EOF
 
 add_design_tokens_sample() {
 	log_info "Adding sample DTCG tokens..."
-	cd "$TARGET_FOLDER/packages/design-tokens"
+	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	mkdir -p tokens
 
@@ -401,7 +401,7 @@ EOF
 
 add_design_tokens_tsconfig() {
 	log_info "Adding TypeScript configuration for design-tokens..."
-	cd "$TARGET_FOLDER/packages/design-tokens"
+	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	cat > tsconfig.json <<'EOF'
 {
@@ -426,7 +426,7 @@ EOF
 
 add_design_tokens_readme() {
 	log_info "Creating design-tokens README.md..."
-	cd "$TARGET_FOLDER/packages/design-tokens"
+	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	cat > README.md <<'EOF'
 # `@repo/design-tokens`
