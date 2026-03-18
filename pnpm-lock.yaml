@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@wasm-fmt/shfmt':
+        specifier: 0.2.6
+        version: 0.2.6
       shellcheck:
         specifier: 4.1.0
         version: 4.1.0
@@ -27,6 +30,10 @@ packages:
 
   '@tokenizer/token@0.3.0':
     resolution: {integrity: sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==}
+
+  '@wasm-fmt/shfmt@0.2.6':
+    resolution: {integrity: sha512-n141PyeTqKDTOqPEgSFBo0K0JWAG2FOTa6OojJVkoYUg5NY51/A+eZI7U0eGC5XExUlIV9Tu+D4UGjfr8XyXtQ==}
+    engines: {node: '>=16.17.0'}
 
   '@xhmikosr/decompress-tar@8.1.0':
     resolution: {integrity: sha512-m0q8x6lwxenh1CrsTby0Jrjq4vzW/QU1OLhTHMQLEdHpmjR1lgahGz++seZI0bXF3XcZw3U3xHfqZSz+JPP2Gg==}
@@ -515,6 +522,8 @@ snapshots:
       - supports-color
 
   '@tokenizer/token@0.3.0': {}
+
+  '@wasm-fmt/shfmt@0.2.6': {}
 
   '@xhmikosr/decompress-tar@8.1.0':
     dependencies:
