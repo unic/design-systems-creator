@@ -38,18 +38,18 @@ rename_ui_package() {
 
 	# Step 2: Update package name in ui-react/package.json
 	if [ -f "packages/ui-react/package.json" ]; then
-		jq '.name = "@repo/ui-react"' packages/ui-react/package.json > packages/ui-react/package.json.tmp \
-			&& mv packages/ui-react/package.json.tmp packages/ui-react/package.json
+		jq '.name = "@repo/ui-react"' packages/ui-react/package.json >packages/ui-react/package.json.tmp &&
+			mv packages/ui-react/package.json.tmp packages/ui-react/package.json
 		log_info "  Updated package name to @repo/ui-react"
 	fi
 
 	# Step 3: Update dependencies in apps/web/package.json
 	if [ -f "apps/web/package.json" ]; then
 		# Check if @repo/ui exists in dependencies and replace with @repo/ui-react
-		if jq -e '.dependencies["@repo/ui"]' apps/web/package.json > /dev/null 2>&1; then
+		if jq -e '.dependencies["@repo/ui"]' apps/web/package.json >/dev/null 2>&1; then
 			jq '.dependencies["@repo/ui-react"] = .dependencies["@repo/ui"] | del(.dependencies["@repo/ui"])' \
-				apps/web/package.json > apps/web/package.json.tmp \
-				&& mv apps/web/package.json.tmp apps/web/package.json
+				apps/web/package.json >apps/web/package.json.tmp &&
+				mv apps/web/package.json.tmp apps/web/package.json
 			log_info "  Updated apps/web/package.json dependency: @repo/ui -> @repo/ui-react"
 		fi
 	fi
@@ -69,7 +69,7 @@ setup_workspace() {
 	log_info "Appending workspace setup..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat >> pnpm-workspace.yaml <<'EOF'
+	cat >>pnpm-workspace.yaml <<'EOF'
 
 # =======================================================
 # Control 1: Lifecycle Script Management
@@ -139,7 +139,7 @@ catalogMode: "prefer"
 
 EOF
 
-	echo "useNodeVersion: $(node -v | sed 's/v//')" >> pnpm-workspace.yaml
+	echo "useNodeVersion: $(node -v | sed 's/v//')" >>pnpm-workspace.yaml
 
 	log_success "pnpm-workspace updated"
 }
@@ -148,7 +148,7 @@ setup_npmrc() {
 	log_info "Creating .npmrc configuration..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > .npmrc <<'EOF'
+	cat >.npmrc <<'EOF'
 auto-install-peers = true
 save-exact = true
 save-prefix = ""

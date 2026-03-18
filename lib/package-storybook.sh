@@ -66,7 +66,7 @@ init_storybook_with_cli() {
 			"@repo/eslint-config": "workspace:*",
 			"@repo/typescript-config": "workspace:*"
 		}
-	}' package.json > package.json.tmp && mv package.json.tmp package.json
+	}' package.json >package.json.tmp && mv package.json.tmp package.json
 }
 
 install_storybook_addons_via_cli() {
@@ -106,7 +106,7 @@ finalize_storybook_package_json() {
 		"test:ui": "vitest --project=storybook --ui",
 		"test:coverage": "vitest --project=storybook --coverage",
 		"lint": "eslint ."
-	}' package.json > package.json.tmp && mv package.json.tmp package.json
+	}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "Storybook package.json finalized"
 }
@@ -125,7 +125,7 @@ customize_storybook_preview_ts() {
 	log_info "Customizing preview.ts with monorepo configuration..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > .storybook/preview.ts <<'EOF'
+	cat >.storybook/preview.ts <<'EOF'
 import type { Preview } from '@storybook/react'
 import { withThemeByClassName } from '@storybook/addon-themes'
 import { initialize, mswLoader } from 'msw-storybook-addon'
@@ -241,7 +241,7 @@ add_storybook_vitest_setup() {
 	log_info "Adding Vitest setup..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > .storybook/vitest.setup.ts <<'EOF'
+	cat >.storybook/vitest.setup.ts <<'EOF'
 import { setProjectAnnotations } from '@storybook/react'
 import * as previewAnnotations from './preview'
 import * as a11yAddonAnnotations from '@storybook/addon-a11y/preview'
@@ -256,7 +256,7 @@ add_storybook_vitest_config() {
 	log_info "Adding Vitest configuration for Storybook..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > vitest.config.ts <<'EOF'
+	cat >vitest.config.ts <<'EOF'
 import { defineConfig, mergeConfig } from 'vitest/config'
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
 import path from 'node:path'
@@ -316,7 +316,7 @@ add_storybook_styles() {
 
 	mkdir -p styles
 
-	cat > styles/globals.css <<'EOF'
+	cat >styles/globals.css <<'EOF'
 @import "tailwindcss";
 @import "@repo/design-tokens/tailwind-theme";
 
@@ -376,7 +376,7 @@ add_storybook_sample_stories() {
 	mkdir -p src/stories
 
 	# Create Introduction.mdx - content from original script lines 1597-1651
-	cat > src/stories/Introduction.mdx <<'STORY_EOF'
+	cat >src/stories/Introduction.mdx <<'STORY_EOF'
 import { Meta } from '@storybook/blocks'
 
 <Meta title="Introduction" />
@@ -433,7 +433,7 @@ pnpm build
 STORY_EOF
 
 	# Create Button.stories.tsx - sample component story (lines 1654-1764)
-	cat > src/stories/Button.stories.tsx <<'STORY_EOF'
+	cat >src/stories/Button.stories.tsx <<'STORY_EOF'
 import type { Meta, StoryObj } from '@storybook/react'
 import { fn } from '@storybook/test'
 import { Button } from '@repo/ui-react'
@@ -546,7 +546,7 @@ export const AllVariants: Story = {
 STORY_EOF
 
 	# Create Tokens.mdx - design tokens documentation (lines 1767-1849)
-	cat > src/stories/Tokens.mdx <<'STORY_EOF'
+	cat >src/stories/Tokens.mdx <<'STORY_EOF'
 import { Meta, ColorPalette, ColorItem, Typeset } from '@storybook/blocks'
 
 <Meta title="Tokens/Overview" />
@@ -641,7 +641,7 @@ add_storybook_tsconfig() {
 	log_info "Adding TypeScript configuration for Storybook..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > tsconfig.json <<'EOF'
+	cat >tsconfig.json <<'EOF'
 {
 	"extends": "@repo/typescript-config/base.json",
 	"compilerOptions": {
@@ -678,7 +678,7 @@ add_storybook_eslint_config() {
 	log_info "Adding ESLint configuration for Storybook..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > eslint.config.mjs <<'EOF'
+	cat >eslint.config.mjs <<'EOF'
 // For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
 import storybook from "eslint-plugin-storybook";
 import reactRefresh from 'eslint-plugin-react-refresh'
@@ -708,7 +708,7 @@ add_storybook_msw_handlers() {
 
 	mkdir -p mocks public
 
-	cat > mocks/handlers.ts <<'EOF'
+	cat >mocks/handlers.ts <<'EOF'
 import { http, HttpResponse } from 'msw'
 
 /**
@@ -741,7 +741,7 @@ export const handlers = [
 EOF
 
 	# Create public directory for MSW service worker (minimal placeholder)
-	cat > public/mockServiceWorker.js <<'EOF'
+	cat >public/mockServiceWorker.js <<'EOF'
 /* eslint-disable */
 /* tslint:disable */
 
@@ -763,7 +763,7 @@ add_storybook_readme() {
 	log_info "Creating Storybook README..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
-	cat > README.md <<'EOF'
+	cat >README.md <<'EOF'
 # @repo/storybook-react
 
 Storybook for React components and design system documentation.

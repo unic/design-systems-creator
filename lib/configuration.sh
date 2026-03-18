@@ -14,7 +14,7 @@ create_license() {
 	log_info "Creating LICENSE file..."
 	cd "$TARGET_FOLDER" || exit
 
-	curl -s https://spdx.org/licenses/LGPL-3.0-or-later.json | jq -r '.licenseText' > LICENSE.txt
+	curl -s https://spdx.org/licenses/LGPL-3.0-or-later.json | jq -r '.licenseText' >LICENSE.txt
 	log_success "LICENSE file created"
 }
 
@@ -22,7 +22,7 @@ create_editorconfig() {
 	log_info "Creating .editorconfig..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > .editorconfig <<'EOF'
+	cat >.editorconfig <<'EOF'
 root = true
 
 [*]
@@ -49,7 +49,7 @@ create_eslint_config() {
 	log_info "Creating eslint.config.mjs..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > eslint.config.mjs <<'EOF'
+	cat >eslint.config.mjs <<'EOF'
 import { config } from "@repo/eslint-config/base";
 
 /** @type {import("eslint").Linter.Config} */
@@ -62,7 +62,7 @@ create_prettier_config() {
 	log_info "Creating prettier.config.mjs..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > prettier.config.mjs <<'EOF'
+	cat >prettier.config.mjs <<'EOF'
 import config from "@repo/prettier-config/base"
 
 export default config;
@@ -75,7 +75,7 @@ create_prettier_ignore() {
 	log_info "Creating .prettierignore..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > .prettierignore <<'EOF'
+	cat >.prettierignore <<'EOF'
 # Dependencies
 node_modules/
 pnpm-lock.yaml

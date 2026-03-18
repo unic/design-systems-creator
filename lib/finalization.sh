@@ -3,7 +3,7 @@ create_vercel_json() {
 	log_info "Creating vercel.json..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat > vercel.json <<'EOF'
+	cat >vercel.json <<'EOF'
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm install --frozen-lockfile && pnpm turbo run build --filter=web --filter=storybook-react",
@@ -39,7 +39,7 @@ setup_vscode() {
 	cd "$TARGET_FOLDER" || exit
 
 	mkdir -p .vscode
-	cat > .vscode/settings.json <<'EOF'
+	cat >.vscode/settings.json <<'EOF'
 {
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -61,7 +61,7 @@ setup_vscode() {
 }
 EOF
 
-	cat > .vscode/extensions.json <<'EOF'
+	cat >.vscode/extensions.json <<'EOF'
 {
   "recommendations": [
     "editorconfig.editorconfig",
@@ -84,7 +84,7 @@ document_dependency_management() {
 	log_info "Documenting dependency management approach in README.md..."
 	cd "$TARGET_FOLDER" || exit
 
-	cat >> README.md <<'EOF'
+	cat >>README.md <<'EOF'
 
 ---
 

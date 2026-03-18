@@ -8,7 +8,7 @@ define_catalog() {
 
 	find . -name "package.json" -not -path "*/node_modules/*" | while read -r pkg_file; do
 		jq -r '(.dependencies // {}) + (.devDependencies // {}) | to_entries[] | select(.value | startswith("workspace:") | not) | .key' "$pkg_file" 2>/dev/null
-	done | sort -u | grep -v '^$' > /tmp/all_packages.txt
+	done | sort -u | grep -v '^$' >/tmp/all_packages.txt
 
 	# Step 2: Resolve latest versions and add to catalog
 	log_info "Step 2: Resolving latest versions and populating catalog..."
@@ -17,7 +17,7 @@ define_catalog() {
 		if [ -n "$package_name" ]; then
 			log_info "  Resolving $package_name..."
 			local version
-		version=$(get_latest_version "$package_name")
+			version=$(get_latest_version "$package_name")
 			if [ -n "$version" ]; then
 				add_to_catalog "$package_name" "$version"
 				log_info "    Added $package_name@$version to catalog"
@@ -25,7 +25,7 @@ define_catalog() {
 				log_warning "    Could not resolve version for $package_name"
 			fi
 		fi
-	done < /tmp/all_packages.txt
+	done </tmp/all_packages.txt
 
 	rm -f /tmp/all_packages.txt
 
@@ -64,7 +64,7 @@ define_catalog() {
 				log_info "  $dep_name -> catalog:"
 				jq --arg dep "$dep_name" '
 					.devDependencies[$dep] = "catalog:"
-				' package.json > package.json.tmp && mv package.json.tmp package.json
+				' package.json >package.json.tmp && mv package.json.tmp package.json
 			fi
 		done
 	fi

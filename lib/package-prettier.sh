@@ -31,7 +31,7 @@ add_prettier_base_config() {
 	log_info "Adding base Prettier configuration..."
 	cd "$TARGET_FOLDER/packages/prettier-config" || exit
 
-	cat > base.js <<'EOF'
+	cat >base.js <<'EOF'
 /**
  * @see https://prettier.io/docs/configuration
  * @type {import("prettier").Config}
@@ -72,7 +72,7 @@ add_prettier_config_readme() {
 	log_info "Creating README.md..."
 	cd "$TARGET_FOLDER/packages/prettier-config" || exit
 
-	cat > README.md <<'EOF'
+	cat >README.md <<'EOF'
 # `@repo/prettier-config`
 
 Collection of internal prettier configurations.

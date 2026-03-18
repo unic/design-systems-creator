@@ -12,13 +12,13 @@
 check_pnpm() {
 	log_info "Checking for pnpm installation..."
 
-	if ! command -v pnpm &> /dev/null; then
+	if ! command -v pnpm &>/dev/null; then
 		log_warning "pnpm not found"
 
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Homebrew found, installing pnpm via Homebrew..."
 			brew install pnpm
-		elif command -v corepack &> /dev/null; then
+		elif command -v corepack &>/dev/null; then
 			log_info "Corepack found, enabling pnpm..."
 			corepack enable
 			corepack prepare pnpm@latest --activate
@@ -46,10 +46,10 @@ check_pnpm() {
 		fi
 	else
 		log_info "pnpm is already installed, upgrading to latest version"
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Homebrew found, upgrading pnpm..."
 			brew upgrade pnpm
-		elif command -v corepack &> /dev/null; then
+		elif command -v corepack &>/dev/null; then
 			log_info "Corepack found, updating pnpm..."
 			corepack enable
 			corepack prepare pnpm@latest --activate
@@ -67,13 +67,13 @@ check_pnpm() {
 check_yq() {
 	log_info "Checking for yq installation..."
 
-	if ! command -v yq &> /dev/null; then
+	if ! command -v yq &>/dev/null; then
 		log_warning "yq not found"
 
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Installing yq via Homebrew..."
 			brew install yq
-		elif command -v pnpm &> /dev/null; then
+		elif command -v pnpm &>/dev/null; then
 			log_info "Installing yq globally via pnpm..."
 			pnpm add -g yq
 		else
@@ -88,10 +88,10 @@ check_yq() {
 check_jq() {
 	log_info "Checking for jq installation..."
 
-	if ! command -v jq &> /dev/null; then
+	if ! command -v jq &>/dev/null; then
 		log_warning "jq not found"
 
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Installing jq via Homebrew..."
 			brew install jq
 		else
@@ -107,7 +107,7 @@ prepare_node() {
 	log_info "Using Node LTS..."
 
 	# Use pnpm to manage node version if possible, or just log
-	if command -v pnpm &> /dev/null; then
+	if command -v pnpm &>/dev/null; then
 		pnpm env use --global lts || log_warning "Failed to set global node version with pnpm, continuing with current version."
 	fi
 

@@ -78,35 +78,35 @@ print_banner() {
 parse_arguments() {
 	while [[ $# -gt 0 ]]; do
 		case $1 in
-			--project-name)
-				PROJECT_NAME="$2"
-				shift 2
-				;;
-			--organization)
-				ORGANIZATION_NAME="$2"
-				shift 2
-				;;
-			# --registry-domain)
-			# 	REGISTRY_DOMAIN="$2"
-			# 	shift 2
-			# 	;;
-			# --azure-devops-url)
-			# 	AZURE_DEVOPS_URL="$2"
-			# 	shift 2
-			# 	;;
-			# --vercel-team-id)
-			# 	VERCEL_TEAM_ID="$2"
-			# 	shift 2
-			# 	;;
-			--help)
-				show_usage
-				exit 0
-				;;
-			*)
-				log_error "Unknown option: $1"
-				show_usage
-				exit 1
-				;;
+		--project-name)
+			PROJECT_NAME="$2"
+			shift 2
+			;;
+		--organization)
+			ORGANIZATION_NAME="$2"
+			shift 2
+			;;
+		# --registry-domain)
+		# 	REGISTRY_DOMAIN="$2"
+		# 	shift 2
+		# 	;;
+		# --azure-devops-url)
+		# 	AZURE_DEVOPS_URL="$2"
+		# 	shift 2
+		# 	;;
+		# --vercel-team-id)
+		# 	VERCEL_TEAM_ID="$2"
+		# 	shift 2
+		# 	;;
+		--help)
+			show_usage
+			exit 0
+			;;
+		*)
+			log_error "Unknown option: $1"
+			show_usage
+			exit 1
+			;;
 		esac
 	done
 
@@ -130,7 +130,7 @@ get_author_name() {
 	local username
 	username=$(whoami)
 	local IFS='.'
-	read -ra name_parts <<< "$username"
+	read -ra name_parts <<<"$username"
 	local author_name_temp=""
 	for part in "${name_parts[@]}"; do
 		author_name_temp+="${part^} "
@@ -146,7 +146,7 @@ get_author_name() {
 #   get_package_deps "devDependencies"           # Get all devDependencies from all packages
 get_package_deps() {
 	local dep_type="${1:-dependencies}" # Default to 'dependencies' if no argument is provided
-	local pkg_path="${2:-}"              # Optional: specific package.json path
+	local pkg_path="${2:-}"             # Optional: specific package.json path
 
 	if [[ "$dep_type" != "dependencies" && "$dep_type" != "devDependencies" ]]; then
 		log_error "Invalid dependency type: $dep_type. Must be 'dependencies' or 'devDependencies'."
@@ -199,7 +199,7 @@ update_package_to_catalog() {
 				# Update the dependency version to "catalog:" using jq
 				jq --arg dep "$dep_name" --arg type "$dep_type" '
 					if .[$type][$dep] then .[$type][$dep] = "catalog:" else . end
-				' "$pkg_path" > "$pkg_path.tmp" && mv "$pkg_path.tmp" "$pkg_path"
+				' "$pkg_path" >"$pkg_path.tmp" && mv "$pkg_path.tmp" "$pkg_path"
 			fi
 		done
 	fi

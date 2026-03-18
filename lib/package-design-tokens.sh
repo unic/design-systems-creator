@@ -49,7 +49,7 @@ create_design_tokens_package() {
 			"style-dictionary": "catalog:",
 			"typescript": "catalog:"
 		}
-	}' package.json > package.json.tmp && mv package.json.tmp package.json
+	}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "@repo/design-tokens package created"
 }
@@ -59,7 +59,7 @@ add_design_tokens_config() {
 	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	# Create Style Dictionary config for DTCG format
-	cat > sd.config.js <<'EOF'
+	cat >sd.config.js <<'EOF'
 import StyleDictionary from 'style-dictionary'
 
 // Custom transform for DTCG $value format
@@ -258,7 +258,7 @@ add_design_tokens_sample() {
 	mkdir -p tokens
 
 	# Sample tokens file in DTCG format (compatible with Tokens Studio)
-	cat > tokens/base.json <<'EOF'
+	cat >tokens/base.json <<'EOF'
 {
   "$type": "color",
   "color": {
@@ -293,7 +293,7 @@ add_design_tokens_sample() {
 }
 EOF
 
-	cat > tokens/semantic.json <<'EOF'
+	cat >tokens/semantic.json <<'EOF'
 {
   "$type": "color",
   "semantic": {
@@ -325,7 +325,7 @@ EOF
 }
 EOF
 
-	cat > tokens/typography.json <<'EOF'
+	cat >tokens/typography.json <<'EOF'
 {
   "typography": {
     "$description": "Typography tokens",
@@ -365,7 +365,7 @@ EOF
 }
 EOF
 
-	cat > tokens/spacing.json <<'EOF'
+	cat >tokens/spacing.json <<'EOF'
 {
   "spacing": {
     "$type": "dimension",
@@ -403,7 +403,7 @@ add_design_tokens_tsconfig() {
 	log_info "Adding TypeScript configuration for design-tokens..."
 	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
-	cat > tsconfig.json <<'EOF'
+	cat >tsconfig.json <<'EOF'
 {
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
@@ -428,7 +428,7 @@ add_design_tokens_readme() {
 	log_info "Creating design-tokens README.md..."
 	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
-	cat > README.md <<'EOF'
+	cat >README.md <<'EOF'
 # `@repo/design-tokens`
 
 Design tokens for the Design System, built with [Style Dictionary](https://amzn.github.io/style-dictionary/) using the [W3C Design Token Community Group (DTCG)](https://tr.designtokens.org/format/) format.

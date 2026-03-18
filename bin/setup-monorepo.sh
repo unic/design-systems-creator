@@ -78,35 +78,35 @@ EOF
 parse_arguments() {
 	while [[ $# -gt 0 ]]; do
 		case $1 in
-			--project-name)
-				PROJECT_NAME="$2"
-				shift 2
-				;;
-			--organization)
-				ORGANIZATION_NAME="$2"
-				shift 2
-				;;
-			--registry-domain)
-				REGISTRY_DOMAIN="$2"
-				shift 2
-				;;
-			--azure-devops-url)
-				AZURE_DEVOPS_URL="$2"
-				shift 2
-				;;
-			--vercel-team-id)
-				VERCEL_TEAM_ID="$2"
-				shift 2
-				;;
-			--help)
-				show_usage
-				exit 0
-				;;
-			*)
-				log_error "Unknown option: $1"
-				show_usage
-				exit 1
-				;;
+		--project-name)
+			PROJECT_NAME="$2"
+			shift 2
+			;;
+		--organization)
+			ORGANIZATION_NAME="$2"
+			shift 2
+			;;
+		--registry-domain)
+			REGISTRY_DOMAIN="$2"
+			shift 2
+			;;
+		--azure-devops-url)
+			AZURE_DEVOPS_URL="$2"
+			shift 2
+			;;
+		--vercel-team-id)
+			VERCEL_TEAM_ID="$2"
+			shift 2
+			;;
+		--help)
+			show_usage
+			exit 0
+			;;
+		*)
+			log_error "Unknown option: $1"
+			show_usage
+			exit 1
+			;;
 		esac
 	done
 
@@ -132,7 +132,7 @@ prompt_registry_domain() {
 
 check_nvm() {
 	log_info "Checking for nvm installation..."
-	
+
 	# Source nvm if available
 	export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 	if [[ -s "$NVM_DIR/nvm.sh" ]]; then
@@ -140,27 +140,27 @@ check_nvm() {
 		source "$NVM_DIR/nvm.sh"
 	fi
 
-	if ! command -v nvm &> /dev/null; then
+	if ! command -v nvm &>/dev/null; then
 		log_error "nvm is not installed. Please install nvm first:"
 		echo "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
 		exit 1
 	fi
-	
+
 	log_success "nvm found"
 }
 
 setup_nodejs() {
 	log_info "Setting up Node.js LTS v${NODE_LTS_VERSION}..."
-	
+
 	# Check if the LTS version is installed
-	if ! nvm ls "$NODE_LTS_VERSION" &> /dev/null; then
+	if ! nvm ls "$NODE_LTS_VERSION" &>/dev/null; then
 		log_info "Installing Node.js LTS v${NODE_LTS_VERSION}..."
 		nvm install "$NODE_LTS_VERSION"
 	fi
-	
+
 	# Use the LTS version
 	nvm use "$NODE_LTS_VERSION"
-	
+
 	# Get the exact version for .nvmrc
 	NODE_EXACT_VERSION=$(node --version | sed 's/v//')
 	log_success "Node.js v${NODE_EXACT_VERSION} is now active"
@@ -168,8 +168,8 @@ setup_nodejs() {
 
 setup_pnpm() {
 	log_info "Setting up pnpm v${PNPM_VERSION}..."
-	
-	if ! command -v pnpm &> /dev/null; then
+
+	if ! command -v pnpm &>/dev/null; then
 		log_info "Installing pnpm..."
 		corepack enable
 		corepack prepare "pnpm@${PNPM_VERSION}" --activate
@@ -180,18 +180,18 @@ setup_pnpm() {
 			corepack prepare "pnpm@${PNPM_VERSION}" --activate
 		fi
 	fi
-	
+
 	log_success "pnpm v${PNPM_VERSION} is ready"
 }
 
 create_directory_structure() {
 	log_info "Creating directory structure..."
-	
+
 	# Config packages
 	mkdir -p packages/config/eslint
 	mkdir -p packages/config/prettier
 	mkdir -p packages/config/typescript
-	
+
 	# React component packages
 	mkdir -p packages/react/button/src
 	mkdir -p packages/react/button/stories
@@ -199,41 +199,41 @@ create_directory_structure() {
 	mkdir -p packages/react/card/stories
 	mkdir -p packages/react/dialog/src
 	mkdir -p packages/react/dialog/stories
-	
+
 	# Shared utilities
 	mkdir -p packages/shared-utilities/hooks
 	mkdir -p packages/shared-utilities/utils
 	mkdir -p packages/shared-utilities/types
-	
+
 	# Design tokens
 	mkdir -p packages/tokens/src/tokens
 	mkdir -p packages/tokens/src/figma
 	mkdir -p packages/tokens/src/build
 	mkdir -p packages/tokens/dist
-	
+
 	# Storybook app
 	mkdir -p apps/storybook/.storybook
 	mkdir -p apps/storybook/stories
-	
+
 	# Registry
 	mkdir -p registry/tokens/web
 	mkdir -p registry/tokens/ios
 	mkdir -p registry/tokens/android
 	mkdir -p registry/react
 	mkdir -p registry/utilities
-	
+
 	log_success "Directory structure created"
 }
 
 create_nvmrc() {
 	log_info "Creating .nvmrc file..."
-	echo "$NODE_EXACT_VERSION" > .nvmrc
+	echo "$NODE_EXACT_VERSION" >.nvmrc
 	log_success ".nvmrc created with Node.js v${NODE_EXACT_VERSION}"
 }
 
 create_editorconfig() {
 	log_info "Creating .editorconfig..."
-	cat > .editorconfig <<'EOF'
+	cat >.editorconfig <<'EOF'
 root = true
 
 [*]
@@ -255,7 +255,7 @@ EOF
 
 create_root_package_json() {
 	log_info "Creating root package.json..."
-	cat > package.json <<EOF
+	cat >package.json <<EOF
 {
 	"name": "${PROJECT_NAME}",
 	"private": true,
@@ -288,7 +288,7 @@ EOF
 
 create_pnpm_workspace() {
 	log_info "Creating pnpm-workspace.yaml..."
-	cat > pnpm-workspace.yaml <<'EOF'
+	cat >pnpm-workspace.yaml <<'EOF'
 packages:
   - "apps/*"
   - "packages/*"
@@ -329,7 +329,7 @@ EOF
 
 create_turbo_json() {
 	log_info "Creating turbo.json..."
-	cat > turbo.json <<'EOF'
+	cat >turbo.json <<'EOF'
 {
 	"$schema": "https://turbo.build/schema.json",
 	"globalDependencies": [
@@ -387,7 +387,7 @@ EOF
 
 create_tsconfig_base() {
 	log_info "Creating tsconfig.base.json..."
-	cat > tsconfig.base.json <<'EOF'
+	cat >tsconfig.base.json <<'EOF'
 {
 	"$schema": "https://json.schemastore.org/tsconfig",
 	"display": "Base",
@@ -418,7 +418,7 @@ EOF
 
 create_tsconfig_root() {
 	log_info "Creating tsconfig.json..."
-	cat > tsconfig.json <<'EOF'
+	cat >tsconfig.json <<'EOF'
 {
 	"extends": "./tsconfig.base.json",
 	"compilerOptions": {
@@ -436,7 +436,7 @@ EOF
 
 create_eslint_config() {
 	log_info "Creating .eslintrc.cjs..."
-	cat > .eslintrc.cjs <<'EOF'
+	cat >.eslintrc.cjs <<'EOF'
 /** @type {import('eslint').Linter.Config} */
 module.exports = {
 	root: true,
@@ -460,7 +460,7 @@ EOF
 
 create_prettier_config() {
 	log_info "Creating .prettierrc.cjs..."
-	cat > .prettierrc.cjs <<'EOF'
+	cat >.prettierrc.cjs <<'EOF'
 module.exports = require("@finma/prettier-config");
 EOF
 	log_success ".prettierrc.cjs created"
@@ -468,7 +468,7 @@ EOF
 
 create_prettier_ignore() {
 	log_info "Creating .prettierignore..."
-	cat > .prettierignore <<'EOF'
+	cat >.prettierignore <<'EOF'
 # Dependencies
 node_modules/
 pnpm-lock.yaml
@@ -496,7 +496,7 @@ EOF
 
 create_env_example() {
 	log_info "Creating .env.example..."
-	cat > .env.example <<EOF
+	cat >.env.example <<EOF
 # Finma Design System Environment Variables
 # Copy this file to .env.local and configure your values
 
@@ -561,7 +561,7 @@ EOF
 
 create_vercel_json() {
 	log_info "Creating vercel.json..."
-	cat > vercel.json <<'EOF'
+	cat >vercel.json <<'EOF'
 {
 	"$schema": "https://openapi.vercel.sh/vercel.json",
 	"buildCommand": "pnpm turbo build --filter=playground --filter=storybook",
@@ -575,10 +575,10 @@ EOF
 
 create_gitignore_update() {
 	log_info "Updating .gitignore..."
-	
+
 	# Append additional entries if not already present
 	if ! grep -q "# Turbo" .gitignore 2>/dev/null; then
-		cat >> .gitignore <<'EOF'
+		cat >>.gitignore <<'EOF'
 
 # Turbo
 .turbo/
@@ -617,15 +617,15 @@ EOF
 setup_git_remote() {
 	if [[ -n "$AZURE_DEVOPS_URL" ]]; then
 		log_info "Configuring Azure DevOps remote..."
-		
+
 		# Check if origin already exists
-		if git remote get-url origin &> /dev/null; then
+		if git remote get-url origin &>/dev/null; then
 			log_info "Remote 'origin' already exists, updating URL..."
 			git remote set-url origin "$AZURE_DEVOPS_URL"
 		else
 			git remote add origin "$AZURE_DEVOPS_URL"
 		fi
-		
+
 		log_success "Azure DevOps remote configured: $AZURE_DEVOPS_URL"
 	fi
 }
@@ -683,15 +683,15 @@ main() {
 	print_banner
 	parse_arguments "$@"
 	prompt_registry_domain
-	
+
 	echo ""
 	log_info "Starting setup for project: ${PROJECT_NAME}"
 	echo ""
-	
+
 	check_nvm
 	setup_nodejs
 	setup_pnpm
-	
+
 	create_directory_structure
 	create_nvmrc
 	create_editorconfig
@@ -706,14 +706,14 @@ main() {
 	create_env_example
 	create_vercel_json
 	create_gitignore_update
-	
+
 	setup_git_remote
-	
+
 	# Note: Dependencies installation and commit are commented out
 	# as this script is meant to scaffold structure, not fully initialize
 	# install_dependencies
 	# create_initial_commit
-	
+
 	print_summary
 }
 

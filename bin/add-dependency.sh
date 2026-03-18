@@ -89,13 +89,13 @@ find_workspace_root() {
 check_yq() {
 	log_info "Checking for yq installation..."
 
-	if ! command -v yq &> /dev/null; then
+	if ! command -v yq &>/dev/null; then
 		log_warning "yq not found"
 
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Installing yq via Homebrew..."
 			brew install yq
-		elif command -v pnpm &> /dev/null; then
+		elif command -v pnpm &>/dev/null; then
 			log_info "Installing yq globally via pnpm..."
 			pnpm add -g yq
 		else
@@ -110,10 +110,10 @@ check_yq() {
 check_jq() {
 	log_info "Checking for jq installation..."
 
-	if ! command -v jq &> /dev/null; then
+	if ! command -v jq &>/dev/null; then
 		log_warning "jq not found"
 
-		if command -v brew &> /dev/null; then
+		if command -v brew &>/dev/null; then
 			log_info "Installing jq via Homebrew..."
 			brew install jq
 		else
@@ -194,15 +194,15 @@ add_to_package() {
 	# Determine pnpm flags based on dependency type
 	local pnpm_flags="--save-exact"
 	case "$type" in
-		dev)
-			pnpm_flags+=" -D"
-			;;
-		peer)
-			pnpm_flags+=" --save-peer"
-			;;
-		dep)
-			pnpm_flags+=" -P"
-			;;
+	dev)
+		pnpm_flags+=" -D"
+		;;
+	peer)
+		pnpm_flags+=" --save-peer"
+		;;
+	dep)
+		pnpm_flags+=" -P"
+		;;
 	esac
 
 	log_info "Adding $pkg_name to $target as $type dependency..."
@@ -265,19 +265,19 @@ interactive_select_type() {
 	read -rp "Enter number or type [dep]: " selection
 
 	case "$selection" in
-		1|dep|"")
-			DEP_TYPE="dep"
-			;;
-		2|dev)
-			DEP_TYPE="dev"
-			;;
-		3|peer)
-			DEP_TYPE="peer"
-			;;
-		*)
-			log_error "Invalid selection"
-			exit 1
-			;;
+	1 | dep | "")
+		DEP_TYPE="dep"
+		;;
+	2 | dev)
+		DEP_TYPE="dev"
+		;;
+	3 | peer)
+		DEP_TYPE="peer"
+		;;
+	*)
+		log_error "Invalid selection"
+		exit 1
+		;;
 	esac
 }
 
@@ -311,51 +311,51 @@ handle_missing_from_catalog() {
 	read -rp "> " confirm
 
 	case "$confirm" in
-		""|y|Y|yes|Yes|YES)
-			add_to_catalog "$pkg_name" "$latest_version"
-			;;
-		*)
-			log_info "Aborted. Please add $pkg_name to the catalog manually:"
-			echo ""
-			echo "  In pnpm-workspace.yaml:"
-			echo "  catalog:"
-			echo "    $pkg_name: $latest_version"
-			echo ""
-			exit 1
-			;;
+	"" | y | Y | yes | Yes | YES)
+		add_to_catalog "$pkg_name" "$latest_version"
+		;;
+	*)
+		log_info "Aborted. Please add $pkg_name to the catalog manually:"
+		echo ""
+		echo "  In pnpm-workspace.yaml:"
+		echo "  catalog:"
+		echo "    $pkg_name: $latest_version"
+		echo ""
+		exit 1
+		;;
 	esac
 }
 
 parse_arguments() {
 	while [[ $# -gt 0 ]]; do
 		case $1 in
-			--package|-p)
-				PACKAGE_NAME="$2"
-				shift 2
-				;;
-			--to|-t)
-				TARGET_PATH="$2"
-				shift 2
-				;;
-			--type)
-				DEP_TYPE="$2"
-				shift 2
-				;;
-			--dev|-D)
-				DEP_TYPE="dev"
-				shift
-				;;
-			--peer|-P)
-				DEP_TYPE="peer"
-				shift
-				;;
-			--help|-h)
-				show_usage
-				;;
-			*)
-				log_error "Unknown option: $1"
-				show_usage
-				;;
+		--package | -p)
+			PACKAGE_NAME="$2"
+			shift 2
+			;;
+		--to | -t)
+			TARGET_PATH="$2"
+			shift 2
+			;;
+		--type)
+			DEP_TYPE="$2"
+			shift 2
+			;;
+		--dev | -D)
+			DEP_TYPE="dev"
+			shift
+			;;
+		--peer | -P)
+			DEP_TYPE="peer"
+			shift
+			;;
+		--help | -h)
+			show_usage
+			;;
+		*)
+			log_error "Unknown option: $1"
+			show_usage
+			;;
 		esac
 	done
 }
@@ -389,11 +389,11 @@ main() {
 
 	# Validate dependency type
 	case "$DEP_TYPE" in
-		dep|dev|peer) ;;
-		*)
-			log_error "Invalid dependency type: $DEP_TYPE (must be dep, dev, or peer)"
-			exit 1
-			;;
+	dep | dev | peer) ;;
+	*)
+		log_error "Invalid dependency type: $DEP_TYPE (must be dep, dev, or peer)"
+		exit 1
+		;;
 	esac
 
 	echo ""
