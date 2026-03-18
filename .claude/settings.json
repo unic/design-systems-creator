@@ -3,7 +3,7 @@
     "allow": [
       "Bash(pnpm run:*)",
       "Bash(grep -E '\\\\.sh$')",
-      "Bash(find /Users/oriol.torrent/Sites/UNIC/design-systems-creator/node_modules -name *shfmt*)",
+      "Bash(find node_modules -name *shfmt*)",
       "Bash(pnpm info:*)",
       "Bash(npm info:*)"
     ]

@@ -14,7 +14,7 @@ create_license() {
 	log_info "Creating LICENSE file..."
 	cd "$TARGET_FOLDER" || exit
 
-	curl -s https://spdx.org/licenses/LGPL-3.0-or-later.json | jq -r '.licenseText' >LICENSE.txt
+	curl -s https://spdx.org/licenses/LGPL-3.0-or-later.json | jq -r '.licenseText' >LICENSE
 	log_success "LICENSE file created"
 }
 

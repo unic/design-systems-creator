@@ -57,7 +57,8 @@ rename_ui_package() {
 	# Step 4: Update turbo.json if it references @repo/ui
 	if [ -f "turbo.json" ]; then
 		if grep -q '@repo/ui' turbo.json; then
-			sed -i '' 's/@repo\/ui/@repo\/ui-react/g' turbo.json
+			tmp_sed_file="$(mktemp)"
+			sed 's/@repo\/ui/@repo\/ui-react/g' turbo.json >"$tmp_sed_file" && mv "$tmp_sed_file" turbo.json
 			log_info "  Updated turbo.json references: @repo/ui -> @repo/ui-react"
 		fi
 	fi

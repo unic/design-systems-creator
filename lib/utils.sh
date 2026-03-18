@@ -44,7 +44,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Required:
   --project-name NAME       Project name (used for package naming)
-  --organization NAME       Organization name (default: finma)
+  --organization NAME       Organization name
 
 # Optional:
 #  --registry-domain DOMAIN  Shadcn registry domain (interactive if not provided)
