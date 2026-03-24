@@ -18,11 +18,13 @@ create_prettier_config_package() {
 		NPM_CONFIG_INIT_VERSION="1.0.0" \
 		NPM_CONFIG_INIT_NAME="@repo/prettier-config" \
 		NPM_CONFIG_INIT_TYPE="module" \
-		NPM_CONFIG_INIT_EXPORTS="./base.js" \
 		NPM_CONFIG_INIT_FILES="base.js" \
 		NPM_CONFIG_INIT_MAIN="base.js" \
 		NPM_CONFIG_INIT_PRIVATE="true" \
 		pnpm init
+
+	# Set exports with proper subpath mapping so `@repo/prettier-config/base` resolves
+	jq '. + { "exports": { ".": "./base.js", "./base": "./base.js" } }' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "@repo/prettier-config package created"
 }
