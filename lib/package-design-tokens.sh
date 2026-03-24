@@ -73,7 +73,7 @@ StyleDictionary.registerTransform({
 StyleDictionary.registerFormat({
 	name: 'tailwind/theme',
 	format: ({ dictionary }) => {
-		const buildTailwindObject = (tokens, prefix = '') => {
+		const buildTailwindObject = (tokens) => {
 			const result = {}
 
 			for (const [key, value] of Object.entries(tokens)) {
@@ -82,7 +82,7 @@ StyleDictionary.registerFormat({
 					result[key] = value.$value
 				} else if (typeof value === 'object' && value !== null) {
 					// Nested group
-					result[key] = buildTailwindObject(value, `${prefix}${key}-`)
+					result[key] = buildTailwindObject(value)
 				}
 			}
 
