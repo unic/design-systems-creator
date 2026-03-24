@@ -3,12 +3,16 @@ define_catalog() {
 	log_info "Defining pnpm workspace catalog..."
 	cd "$TARGET_FOLDER" || exit
 
+	local tmp_file
+	tmp_file=$(mktemp)
+	trap 'rm -f "$tmp_file"' RETURN
+
 	# Step 1: Collect all unique dependencies from ALL packages (including root, excluding workspace: refs)
 	log_info "Step 1: Collecting all dependencies from all packages..."
 
 	find . -name "package.json" -not -path "*/node_modules/*" | while read -r pkg_file; do
 		jq -r '(.dependencies // {}) + (.devDependencies // {}) | to_entries[] | select(.value | startswith("workspace:") | not) | .key' "$pkg_file" 2>/dev/null
-	done | sort -u | grep -v '^$' >/tmp/all_packages.txt
+	done | sort -u | grep -v '^$' >"$tmp_file"
 
 	# Step 2: Resolve latest versions and add to catalog
 	log_info "Step 2: Resolving latest versions and populating catalog..."
@@ -25,9 +29,9 @@ define_catalog() {
 				log_warning "    Could not resolve version for $package_name"
 			fi
 		fi
-	done </tmp/all_packages.txt
+	done <"$tmp_file"
 
-	rm -f /tmp/all_packages.txt
+	rm -f "$tmp_file"
 
 	# Step 3: Update workspace packages to use catalog: protocol
 	log_info "Step 3: Updating workspace packages to use catalog: protocol..."
