@@ -742,21 +742,13 @@ export const handlers = [
 ]
 EOF
 
-	# Create public directory for MSW service worker (minimal placeholder)
-	cat >public/mockServiceWorker.js <<'EOF'
-/* eslint-disable */
-/* tslint:disable */
-
-/**
- * Mock Service Worker.
- * @see https://github.com/mswjs/msw
- * - Please do NOT modify this file.
- * - Please do NOT serve this file on production.
- */
-
-// Placeholder - actual MSW service worker will be generated during build
-console.log('MSW Service Worker placeholder')
-EOF
+	# Generate the real MSW service worker via CLI
+	log_info "Generating MSW service worker..."
+	if pnpm dlx msw init public --save 2>/dev/null; then
+		log_success "MSW service worker generated"
+	else
+		log_warning "Could not generate MSW service worker. Run 'npx msw init public --save' manually after setup."
+	fi
 
 	log_success "MSW handlers added"
 }
