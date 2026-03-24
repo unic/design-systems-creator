@@ -1,0 +1,20 @@
+{
+  "name": "design-systems-creator",
+  "version": "1.0.0",
+  "description": "CLI tool to create design system based products at Unic.",
+  "main": "index.js",
+  "scripts": {
+    "format": "node scripts/shfmt.mjs -w bin/*.sh lib/*.sh",
+    "format:check": "node scripts/shfmt.mjs -d bin/*.sh lib/*.sh",
+    "lint": "shellcheck bin/*.sh lib/*.sh && node scripts/shfmt.mjs -d bin/*.sh lib/*.sh",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Oriol Torrent Florensa <oriol.torrent@unic.com>",
+  "license": "LGPL-3.0-or-later",
+  "packageManager": "pnpm@10.28.2",
+  "devDependencies": {
+    "@wasm-fmt/shfmt": "0.2.6",
+    "shellcheck": "4.1.0"
+  }
+}
