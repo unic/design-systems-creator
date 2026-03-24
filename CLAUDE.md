@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **Bash-based monorepo generator** for creating design systems. It scaffolds complete TypeScript monorepos with Turborepo, pnpm workspaces, React component libraries, Style Dictionary design tokens, and Storybook.
 
-**License**: LGPL-3.0
+**License**: LGPL-3.0-or-later
 
 ## Running the Generator
 
