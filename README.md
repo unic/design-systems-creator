@@ -53,9 +53,12 @@ Main entry point.
 | `--project-name NAME` | Yes      | Project name (used for directory and package scoping) |
 | `--organization NAME` | Yes      | Organization name                                     |
 
-### `bin/add-dependency.sh`
+### `add-dependency.sh`
 
 Manages dependencies in a generated monorepo. Resolves versions against the pnpm catalog and adds entries automatically.
+
+> **Note:** The generator copies this script to `scripts/add-dependency.sh` in the generated monorepo.
+> The examples below use the path as it appears in a generated project.
 
 **Interactive mode** (prompts for package, target, and type):
 
