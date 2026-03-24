@@ -665,7 +665,8 @@ add_storybook_tsconfig() {
 	},
 	"include": [
 		".storybook/**/*",
-		"stories/**/*",
+		"src/**/*",
+		"mocks/**/*",
 		"vitest.config.ts"
 	],
 	"exclude": ["node_modules", "storybook-static"]
