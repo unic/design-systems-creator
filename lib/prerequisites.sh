@@ -27,22 +27,12 @@ check_pnpm() {
 			curl -fsSL https://get.pnpm.io/install.sh | sh -
 		fi
 
-		# Attempt to refresh environment for the current script execution
-		# We try to source the shell configuration to make pnpm available immediately
-		local shell_rc=""
-		if [[ "$SHELL" == */zsh ]]; then
-			shell_rc="$HOME/.zshrc"
-		elif [[ "$SHELL" == */bash ]]; then
-			shell_rc="$HOME/.bashrc"
-		fi
+		# Update PATH for common pnpm install locations instead of sourcing shell rc files
+		# (sourcing rc files can execute arbitrary user-defined code)
+		export PATH="$HOME/.local/share/pnpm:$HOME/Library/pnpm:$HOME/.pnpm:$PATH"
 
-		if [[ -n "$shell_rc" && -f "$shell_rc" ]]; then
-			log_info "Sourcing $shell_rc to update PATH..."
-			# Use || true to prevent script exit on rc file errors
-			# shellcheck disable=SC1090
-			source "$shell_rc" || true
-		else
-			log_warning "Could not detect shell configuration file. You may need to restart your shell or add pnpm to your PATH manually."
+		if ! command -v pnpm &>/dev/null; then
+			log_warning "pnpm installed but not found in PATH. Please restart your shell or add pnpm to your PATH manually."
 		fi
 	else
 		log_info "pnpm is already installed, upgrading to latest version"
