@@ -37,36 +37,13 @@ init_storybook_with_cli() {
 		--package-manager pnpm \
 		--no-dev 2>/dev/null; then
 		log_success "Storybook initialized via CLI"
-		unset STORYBOOK_INIT_EMPTY_TYPE
-		return 0
 	else
-		log_warning "Storybook CLI init encountered issues, continuing with manual fallback..."
-		unset STORYBOOK_INIT_EMPTY_TYPE
-		return 1
+		log_warning "Storybook CLI init encountered issues, continuing with manual setup..."
+		# Create minimal .storybook directory so subsequent functions can populate it
+		mkdir -p .storybook
 	fi
 
-	# shellcheck disable=SC2317,SC2154
-	pnpm pkg set \
-		"license=LGPL-3.0-or-later" \
-		"author=$DEVELOPER" \
-		"description=Storybook for ${ORGANIZATION_NAME} React components and design tokens" \
-		"version=1.0.0" \
-		"name=@repo/storybook-react" \
-		"type=module" \
-		"private=true" \
-		"packageManager=$package_manager"
-
-	# # Add workspace dependencies first
-	jq '. + {
-		"dependencies": {
-			"@repo/design-tokens": "workspace:*",
-			"@repo/ui-react": "workspace:*"
-		},
-		"devDependencies": {
-			"@repo/eslint-config": "workspace:*",
-			"@repo/typescript-config": "workspace:*"
-		}
-	}' package.json >package.json.tmp && mv package.json.tmp package.json
+	unset STORYBOOK_INIT_EMPTY_TYPE
 }
 
 install_storybook_addons_via_cli() {
@@ -98,6 +75,21 @@ finalize_storybook_package_json() {
 	log_info "Finalizing Storybook package.json scripts..."
 	cd "$TARGET_FOLDER/apps/storybook-react" || exit
 
+	# Set package metadata fields
+	jq --arg developer "$DEVELOPER" \
+		--arg org "$ORGANIZATION_NAME" \
+		--arg pm "pnpm@${PNPM_VERSION}" \
+		'. + {
+			"name": "@repo/storybook-react",
+			"version": "1.0.0",
+			"description": ("Storybook for " + $org + " React components and design tokens"),
+			"author": $developer,
+			"license": "LGPL-3.0-or-later",
+			"type": "module",
+			"private": true,
+			"packageManager": $pm
+		}' package.json >package.json.tmp && mv package.json.tmp package.json
+
 	# Ensure correct scripts are set (may override CLI defaults)
 	jq '.scripts = {
 		"dev": "storybook dev -p 6006",
@@ -106,6 +98,15 @@ finalize_storybook_package_json() {
 		"test:ui": "vitest --project=storybook --ui",
 		"test:coverage": "vitest --project=storybook --coverage",
 		"lint": "eslint ."
+	}' package.json >package.json.tmp && mv package.json.tmp package.json
+
+	# Add workspace dependencies
+	jq '.dependencies += {
+		"@repo/design-tokens": "workspace:*",
+		"@repo/ui-react": "workspace:*"
+	} | .devDependencies += {
+		"@repo/eslint-config": "workspace:*",
+		"@repo/typescript-config": "workspace:*"
 	}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "Storybook package.json finalized"
