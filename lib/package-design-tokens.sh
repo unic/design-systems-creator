@@ -154,9 +154,18 @@ StyleDictionary.registerFormat({
 		const processTokens = (tokens, prefix = '') => {
 			for (const [key, value] of Object.entries(tokens)) {
 				if (value.$value !== undefined) {
-					// Use the CSS variable name from tokens.css
+					// Map the token to its CSS variable from tokens.css
 					const varName = `${prefix}${key}`.replace(/([A-Z])/g, '-$1').toLowerCase()
-					lines.push(`\t--${varName}: var(--${varName});`)
+					let cssValue
+					if (typeof value.$value === 'string' && value.$value.startsWith('{')) {
+						// DTCG alias reference: {color.neutral.50} → var(--color-neutral-50)
+						const refPath = value.$value.slice(1, -1)
+						const refVarName = refPath.replace(/\./g, '-').replace(/([A-Z])/g, '-$1').toLowerCase()
+						cssValue = `var(--${refVarName})`
+					} else {
+						cssValue = value.$value
+					}
+					lines.push(`\t--${varName}: ${cssValue};`)
 				} else if (typeof value === 'object' && value !== null && !key.startsWith('$')) {
 					processTokens(value, `${prefix}${key}-`)
 				}
