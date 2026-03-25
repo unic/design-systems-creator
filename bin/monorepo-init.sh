@@ -102,6 +102,8 @@ main() {
 	# IMPORTANT: Run this BEFORE customizing preview.ts, so CLI can parse the simple generated files
 	# install_storybook_addons_via_cli
 	finalize_storybook_package_json
+	patch_storybook_vite_config
+	patch_storybook_main_ts_addons
 
 	# Patch CLI-generated files with monorepo-specific config
 	# (Run AFTER addon CLI commands to avoid parsing issues)

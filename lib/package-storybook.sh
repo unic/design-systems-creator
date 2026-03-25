@@ -44,6 +44,19 @@ init_storybook_with_cli() {
 	fi
 
 	unset STORYBOOK_INIT_EMPTY_TYPE
+
+	# Remove CLI-generated sample stories — we replace them with our own
+	log_info "Removing CLI-generated sample stories..."
+	rm -f src/stories/Button.stories.ts \
+		src/stories/Button.tsx \
+		src/stories/Header.stories.ts \
+		src/stories/Header.tsx \
+		src/stories/Page.stories.ts \
+		src/stories/Page.tsx \
+		src/stories/Configure.mdx \
+		src/stories/button.css \
+		src/stories/header.css \
+		src/stories/page.css
 }
 
 install_storybook_addons_via_cli() {
@@ -103,10 +116,16 @@ finalize_storybook_package_json() {
 	# Add workspace dependencies
 	jq '.dependencies += {
 		"@repo/design-tokens": "workspace:*",
-		"@repo/ui-react": "workspace:*"
+		"@repo/ui-react": "workspace:*",
+		"msw": "catalog:",
+		"msw-storybook-addon": "catalog:"
 	} | .devDependencies += {
 		"@repo/eslint-config": "workspace:*",
-		"@repo/typescript-config": "workspace:*"
+		"@repo/typescript-config": "workspace:*",
+		"@storybook/addon-themes": "catalog:",
+		"@storybook/test": "catalog:",
+		"@tailwindcss/vite": "catalog:",
+		"tailwindcss": "catalog:"
 	}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "Storybook package.json finalized"
@@ -115,6 +134,70 @@ finalize_storybook_package_json() {
 # =============================================================================
 # Storybook Configuration
 # =============================================================================
+
+patch_storybook_vite_config() {
+	log_info "Patching vite.config.ts with @tailwindcss/vite plugin..."
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
+
+	cat >vite.config.ts <<'EOF'
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+	plugins: [tailwindcss(), react()],
+	define: {
+		'process.env': {},
+	},
+})
+EOF
+
+	log_success "vite.config.ts patched"
+}
+
+patch_storybook_main_ts_addons() {
+	log_info "Writing final main.ts with all addons and viteFinal..."
+	cd "$TARGET_FOLDER/apps/storybook-react" || exit
+
+	cat >.storybook/main.ts <<'EOF'
+import type { StorybookConfig } from '@storybook/react-vite'
+import type { InlineConfig } from 'vite'
+import { dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+function getAbsolutePath(value: string) {
+	return dirname(fileURLToPath(import.meta.resolve(`${value}/package.json`)))
+}
+
+const config: StorybookConfig = {
+	stories: [
+		'../src/**/*.mdx',
+		'../src/**/*.stories.@(js|jsx|mjs|ts|tsx)',
+	],
+	addons: [
+		getAbsolutePath('@chromatic-com/storybook'),
+		getAbsolutePath('@storybook/addon-vitest'),
+		getAbsolutePath('@storybook/addon-a11y'),
+		getAbsolutePath('@storybook/addon-docs'),
+		getAbsolutePath('@storybook/addon-onboarding'),
+		getAbsolutePath('@storybook/addon-themes'),
+	],
+	framework: getAbsolutePath('@storybook/react-vite'),
+	viteFinal: async (config: InlineConfig) => {
+		config.define = {
+			...config.define,
+			'process.env': {},
+		}
+		return config
+	},
+}
+
+export default config
+EOF
+
+	log_success "main.ts written"
+}
 
 customize_storybook_preview_ts() {
 	# Replace preview.ts with our customized version
@@ -131,6 +214,8 @@ import type { Preview } from '@storybook/react'
 import { withThemeByClassName } from '@storybook/addon-themes'
 import { initialize, mswLoader } from 'msw-storybook-addon'
 
+// Import UI component styles (Tailwind with ui: prefix)
+import '@repo/ui-react/styles.css'
 // Import design tokens CSS
 import '@repo/design-tokens/css'
 // Import Tailwind v4 theme CSS
@@ -378,7 +463,7 @@ add_storybook_sample_stories() {
 
 	# Create Introduction.mdx - content from original script lines 1597-1651
 	cat >src/stories/Introduction.mdx <<'STORY_EOF'
-import { Meta } from '@storybook/blocks'
+import { Meta } from '@storybook/addon-docs/blocks'
 
 <Meta title="Introduction" />
 
@@ -548,7 +633,7 @@ STORY_EOF
 
 	# Create Tokens.mdx - design tokens documentation (lines 1767-1849)
 	cat >src/stories/Tokens.mdx <<'STORY_EOF'
-import { Meta, ColorPalette, ColorItem, Typeset } from '@storybook/blocks'
+import { Meta, ColorPalette, ColorItem, Typeset } from '@storybook/addon-docs/blocks'
 
 <Meta title="Tokens/Overview" />
 

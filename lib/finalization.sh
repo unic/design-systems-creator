@@ -218,6 +218,10 @@ install_dependencies() {
 
 	pnpm install
 
+	log_info "Building design-tokens and ui-react styles (required before Storybook dev)..."
+	pnpm --filter @repo/design-tokens build
+	pnpm --filter @repo/ui-react build:styles
+
 	log_success "Dependencies installed"
 }
 
