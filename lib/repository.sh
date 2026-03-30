@@ -62,7 +62,14 @@ rename_ui_package() {
 			log_info "  Updated turbo.json references: @repo/ui -> @repo/ui-react"
 		fi
 		# Make dev task depend on upstream builds so packages are built before dev servers start
-		jq '.tasks.dev.dependsOn = ["^build"]' turbo.json >turbo.json.tmp && mv turbo.json.tmp turbo.json
+		jq '.tasks.dev = (.tasks.dev // {})
+			| .tasks.dev.dependsOn =
+				(
+					(.tasks.dev.dependsOn // [])
+					| (if (type == "array") then . else [.] end)
+					| if index("^build") then . else . + ["^build"] end
+				)
+		' turbo.json >turbo.json.tmp && mv turbo.json.tmp turbo.json
 		log_info "  Added dependsOn to turbo.json dev task"
 	fi
 
@@ -83,11 +90,11 @@ rename_ui_package() {
 		log_info "  Added rootDir to packages/ui-react/tsconfig.json"
 	fi
 
-	# Step 7: Add "." root export to ui-react/package.json and create index.ts
+	# Step 7: Add "." root export and "./styles.css" subpath to ui-react/package.json and create index.ts
 	if [ -f "packages/ui-react/package.json" ]; then
-		jq '.exports = ({".": "./dist/index.js"} + .exports) | .type = "module" | .scripts.build = "pnpm build:styles && pnpm build:components"' packages/ui-react/package.json >packages/ui-react/package.json.tmp &&
+		jq '.exports = ({"./styles.css": "./dist/index.css", ".": "./dist/index.js"} + .exports) | .type = "module" | .scripts["build:components"] = (.scripts.build // "tsc --build") | .scripts["build:styles"] = "tailwindcss -i ./src/styles.css -o ./dist/index.css" | .scripts.build = "pnpm build:styles && pnpm build:components"' packages/ui-react/package.json >packages/ui-react/package.json.tmp &&
 			mv packages/ui-react/package.json.tmp packages/ui-react/package.json
-		log_info "  Added root export, type:module, and build script to packages/ui-react/package.json"
+		log_info "  Added root and styles.css exports, type:module, and build script to packages/ui-react/package.json"
 	fi
 
 	if [ -d "packages/ui-react/src" ]; then

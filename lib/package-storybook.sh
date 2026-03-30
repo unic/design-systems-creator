@@ -122,8 +122,12 @@ finalize_storybook_package_json() {
 	} | .devDependencies += {
 		"@repo/eslint-config": "workspace:*",
 		"@repo/typescript-config": "workspace:*",
+		"@storybook/addon-a11y": "catalog:",
 		"@storybook/addon-themes": "catalog:",
+		"@storybook/addon-vitest": "catalog:",
 		"@storybook/test": "catalog:",
+		"@chromatic-com/storybook": "catalog:",
+		"storybook-addon-tag-badges": "catalog:",
 		"@tailwindcss/vite": "catalog:",
 		"tailwindcss": "catalog:"
 	}' package.json >package.json.tmp && mv package.json.tmp package.json
