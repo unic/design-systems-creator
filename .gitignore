@@ -27,6 +27,9 @@ storybook-static/
 *.swp
 *.swo
 
+# node_modules
+node_modules/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -38,6 +41,9 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+
+# Claude local settings
+.claude/settings.local.json
 
 # Misc
 *.bak
@@ -141,7 +147,8 @@ http-client.private.env.json
 __MACOSX/
 .AppleDouble
 .LSOverride
-Icon[]
+Icon[
+]
 
 # Thumbnails
 ._*

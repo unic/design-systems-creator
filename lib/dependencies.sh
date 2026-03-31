@@ -5,7 +5,6 @@ define_catalog() {
 
 	local tmp_file
 	tmp_file=$(mktemp)
-	trap 'rm -f "$tmp_file"' RETURN
 
 	# Step 1: Collect all unique dependencies from ALL packages (including root, excluding workspace: refs)
 	log_info "Step 1: Collecting all dependencies from all packages..."

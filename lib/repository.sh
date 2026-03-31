@@ -54,13 +54,109 @@ rename_ui_package() {
 		fi
 	fi
 
-	# Step 4: Update turbo.json if it references @repo/ui
+	# Step 4: Update turbo.json — rename @repo/ui and add dependsOn to dev task
 	if [ -f "turbo.json" ]; then
 		if grep -q '@repo/ui' turbo.json; then
 			tmp_sed_file="$(mktemp)"
 			sed 's/@repo\/ui/@repo\/ui-react/g' turbo.json >"$tmp_sed_file" && mv "$tmp_sed_file" turbo.json
 			log_info "  Updated turbo.json references: @repo/ui -> @repo/ui-react"
 		fi
+		# Make dev task depend on upstream builds so packages are built before dev servers start
+		jq '.tasks.dev = (.tasks.dev // {})
+			| .tasks.dev.dependsOn =
+				(
+					(.tasks.dev.dependsOn // [])
+					| (if (type == "array") then . else [.] end)
+					| if index("^build") then . else . + ["^build"] end
+				)
+		' turbo.json >turbo.json.tmp && mv turbo.json.tmp turbo.json
+		log_info "  Added dependsOn to turbo.json dev task"
+	fi
+
+	# Step 5: Update @repo/ui imports in app source files
+	find apps -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.css" \) | while read -r src_file; do
+		if grep -q '@repo/ui' "$src_file"; then
+			local tmp_src
+			tmp_src="$(mktemp)"
+			sed 's|@repo/ui/|@repo/ui-react/|g; s|@repo/ui"|@repo/ui-react"|g' "$src_file" >"$tmp_src" && mv "$tmp_src" "$src_file"
+			log_info "  Updated @repo/ui imports in $src_file"
+		fi
+	done
+
+	# Step 6: Add rootDir to ui-react/tsconfig.json (required by TypeScript 6+)
+	if [ -f "packages/ui-react/tsconfig.json" ]; then
+		jq '.compilerOptions.rootDir = "src"' packages/ui-react/tsconfig.json >packages/ui-react/tsconfig.json.tmp &&
+			mv packages/ui-react/tsconfig.json.tmp packages/ui-react/tsconfig.json
+		log_info "  Added rootDir to packages/ui-react/tsconfig.json"
+	fi
+
+	# Step 7: Add "." root export and "./styles.css" subpath to ui-react/package.json and create index.ts
+	if [ -f "packages/ui-react/package.json" ]; then
+		jq '.exports = ({"./styles.css": "./dist/index.css", ".": "./dist/index.js"} + .exports) | .type = "module" | .scripts["build:components"] = (.scripts.build // "tsc --build") | .scripts["build:styles"] = "tailwindcss -i ./src/styles.css -o ./dist/index.css" | .scripts.build = "pnpm build:styles && pnpm build:components"' packages/ui-react/package.json >packages/ui-react/package.json.tmp &&
+			mv packages/ui-react/package.json.tmp packages/ui-react/package.json
+		log_info "  Added root and styles.css exports, type:module, and build script to packages/ui-react/package.json"
+	fi
+
+	if [ -d "packages/ui-react/src" ]; then
+		# Create Button component (referenced by sample stories)
+		cat >packages/ui-react/src/button.tsx <<'EOF'
+import { type ButtonHTMLAttributes } from 'react'
+
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+	variant?: 'primary' | 'secondary' | 'outline' | 'ghost'
+	size?: 'sm' | 'md' | 'lg'
+	children: React.ReactNode
+}
+
+const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
+	primary: 'ui:bg-blue-600 ui:text-white hover:ui:bg-blue-700',
+	secondary: 'ui:bg-neutral-600 ui:text-white hover:ui:bg-neutral-700',
+	outline: 'ui:border ui:border-neutral-600 ui:text-neutral-100 hover:ui:bg-neutral-800',
+	ghost: 'ui:text-neutral-100 hover:ui:bg-neutral-800',
+}
+
+const sizeClasses: Record<NonNullable<ButtonProps['size']>, string> = {
+	sm: 'ui:px-3 ui:py-1.5 ui:text-sm',
+	md: 'ui:px-4 ui:py-2 ui:text-base',
+	lg: 'ui:px-6 ui:py-3 ui:text-lg',
+}
+
+export function Button({
+	variant = 'primary',
+	size = 'md',
+	children,
+	className = '',
+	disabled,
+	...props
+}: ButtonProps) {
+	return (
+		<button
+			className={[
+				'ui:inline-flex ui:items-center ui:justify-center ui:rounded-md ui:font-medium ui:transition-colors ui:cursor-pointer',
+				'disabled:ui:opacity-50 disabled:ui:cursor-not-allowed',
+				variantClasses[variant],
+				sizeClasses[size],
+				className,
+			].join(' ')}
+			disabled={disabled}
+			{...props}
+		>
+			{children}
+		</button>
+	)
+}
+EOF
+		log_info "  Created packages/ui-react/src/button.tsx"
+
+		# Generate barrel export from all .tsx files (excluding styles)
+		{
+			echo "// Auto-generated barrel export"
+			find packages/ui-react/src -name "*.tsx" | sort | while read -r f; do
+				base="$(basename "$f" .tsx)"
+				echo "export * from './${base}.js'"
+			done
+		} >packages/ui-react/src/index.ts
+		log_info "  Created packages/ui-react/src/index.ts"
 	fi
 
 	log_success "@repo/ui renamed to @repo/ui-react"
@@ -88,6 +184,7 @@ strictDepBuilds: true
 onlyBuiltDependencies:
 - "@parcel/watcher"
 - "esbuild"
+- "msw"
 - "sharp"
 # "necessary" == packages that genuinely need their lifecycle scripts to function
 # Ex: native extensions that compile from source or database drivers that link against platform-specific libraries
@@ -113,6 +210,7 @@ minimumReleaseAgeExclude:
 # - next
 # - "@next/env"
 # - turbo
+- "@chromatic-com/storybook"
 # =======================================================
 
 # =======================================================

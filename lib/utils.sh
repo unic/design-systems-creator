@@ -208,7 +208,41 @@ update_package_to_catalog() {
 # Resolve the latest version of a package from npm registry
 get_latest_version() {
 	local package_name="$1"
-	npm view "$package_name" version 2>/dev/null || echo ""
+	local min_age_minutes=1440
+	local cutoff_time
+	cutoff_time=$(date -v-${min_age_minutes}M +%s 2>/dev/null || date -d "${min_age_minutes} minutes ago" +%s 2>/dev/null)
+
+	if [ -z "$cutoff_time" ]; then
+		# Fallback: can't determine age, just use latest
+		npm view "$package_name" version 2>/dev/null || echo ""
+		return
+	fi
+
+	local time_data
+	time_data=$(npm view "$package_name" time --json 2>/dev/null)
+
+	if [ -z "$time_data" ]; then
+		npm view "$package_name" version 2>/dev/null || echo ""
+		return
+	fi
+
+	# Find the latest version published before the cutoff time
+	local mature_version
+	mature_version=$(echo "$time_data" | jq -r \
+		--argjson cutoff "$cutoff_time" \
+		'to_entries
+		| map(select(.key != "created" and .key != "modified"))
+		| map(select((.value | fromdateiso8601) <= $cutoff))
+		| sort_by(.value)
+		| last
+		| .key // empty' 2>/dev/null)
+
+	if [ -n "$mature_version" ]; then
+		echo "$mature_version"
+	else
+		# All versions are too new — fall back to latest and let pnpm decide
+		npm view "$package_name" version 2>/dev/null || echo ""
+	fi
 }
 
 # Add a package to the catalog in pnpm-workspace.yaml
