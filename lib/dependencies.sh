@@ -45,7 +45,7 @@ define_catalog() {
 		fi
 
 		local pkg_name
-		pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
+		pkg_name=$(cd "$pkg_dir" && npm pkg get name | tr -d '"')
 		[ -z "$pkg_name" ] && pkg_name="unknown"
 
 		log_info "Updating package: $pkg_name"
@@ -98,15 +98,15 @@ standardize_packages() {
 		local pkg_dir
 		pkg_dir=$(dirname "$pkg_path")
 		local pkg_name
-		pkg_name=$(cd "$pkg_dir" && pnpm pkg get name | tr -d '"')
+		pkg_name=$(cd "$pkg_dir" && npm pkg get name | tr -d '"')
 		[ -z "$pkg_name" ] && pkg_name="unknown"
 
 		# Check if this is the root package
 		if [ "$pkg_dir" = "." ]; then
 			log_info "Standardizing root package..."
 			# Root package: set all fields including name and description
-			pnpm pkg set private=true --json
-			pnpm pkg set \
+			npm pkg set private=true --json
+			npm pkg set \
 				"name=@$(echo "${ORGANIZATION_NAME}" | tr '[:upper:]' '[:lower:]')/${PROJECT_NAME}" \
 				"description=${ORGANIZATION_NAME} monorepo for Website and Design System" \
 				"version=$version" \
@@ -116,8 +116,8 @@ standardize_packages() {
 		else
 			log_info "Standardizing $pkg_name..."
 			# Workspace packages: preserve name and description, update other fields
-			(cd "$pkg_dir" && pnpm pkg set private=true --json)
-			(cd "$pkg_dir" && pnpm pkg set \
+			(cd "$pkg_dir" && npm pkg set private=true --json)
+			(cd "$pkg_dir" && npm pkg set \
 				"version=$version" \
 				"author=$author" \
 				"license=$license" \
