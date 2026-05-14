@@ -22,7 +22,7 @@ Bash CLI that scaffolds a TypeScript monorepo for design systems — Turborepo, 
 ```
 
 ## Prerequisites
-
+- Bash 4.2 or higher
 - [pnpm](https://pnpm.io/) — package manager
 - [yq](https://github.com/mikefarah/yq) — YAML processor
 - [jq](https://jqlang.github.io/jq/) — JSON processor
