@@ -17,7 +17,7 @@ init_repo() {
 
 	# Update packageManager and engines in root package.json
 	log_info "Setting packageManager to pnpm@$PNPM_VERSION in root package.json..."
-	pnpm pkg set "packageManager=pnpm@$PNPM_VERSION" "engines.node=>=$(node --version | sed 's/^v//')"
+	npm pkg set "packageManager=pnpm@$PNPM_VERSION" "engines.node=>=$(node --version | sed 's/^v//')"
 
 	log_success "Turbo monorepo ready."
 }

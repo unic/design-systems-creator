@@ -12,19 +12,24 @@ create_prettier_config_package() {
 	mkdir -p prettier-config
 	cd prettier-config || exit
 
-	NPM_CONFIG_INIT_LICENSE="LGPL-3.0-or-later" \
-		NPM_CONFIG_INIT_AUTHOR_NAME="${DEVELOPER}" \
-		NPM_CONFIG_INIT_DESCRIPTION="Shared Prettier configuration for the ${ORGANIZATION_NAME} Design System monorepo" \
-		NPM_CONFIG_INIT_VERSION="1.0.0" \
-		NPM_CONFIG_INIT_NAME="@repo/prettier-config" \
-		NPM_CONFIG_INIT_TYPE="module" \
-		NPM_CONFIG_INIT_FILES="base.js" \
-		NPM_CONFIG_INIT_MAIN="base.js" \
-		NPM_CONFIG_INIT_PRIVATE="true" \
-		pnpm init
+	pnpm init --bare
 
-	# Set exports with proper subpath mapping so `@repo/prettier-config/base` resolves
-	jq '. + { "exports": { ".": "./base.js", "./base": "./base.js" } }' package.json >package.json.tmp && mv package.json.tmp package.json
+	jq \
+		--arg name "@repo/prettier-config" \
+		--arg description "Shared Prettier configuration for the ${ORGANIZATION_NAME} Design System monorepo" \
+		--arg author "${DEVELOPER}" \
+		'. + {
+			name: $name,
+			version: "1.0.0",
+			description: $description,
+			author: $author,
+			license: "LGPL-3.0-or-later",
+			type: "module",
+			private: true,
+			main: "base.js",
+			files: ["base.js"],
+			exports: { ".": "./base.js", "./base": "./base.js" }
+		}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "@repo/prettier-config package created"
 }

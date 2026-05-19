@@ -12,44 +12,47 @@ create_design_tokens_package() {
 	mkdir -p design-tokens
 	cd design-tokens || exit
 
-	NPM_CONFIG_INIT_LICENSE="LGPL-3.0-or-later" \
-		NPM_CONFIG_INIT_AUTHOR_NAME="${DEVELOPER}" \
-		NPM_CONFIG_INIT_DESCRIPTION="Design tokens for the ${ORGANIZATION_NAME} Design System (Style Dictionary + DTCG)" \
-		NPM_CONFIG_INIT_VERSION="1.0.0" \
-		NPM_CONFIG_INIT_NAME="@repo/design-tokens" \
-		NPM_CONFIG_INIT_TYPE="module" \
-		NPM_CONFIG_INIT_PRIVATE="true" \
-		pnpm init
+	pnpm init --bare
 
-	# Add exports and files configuration
-	jq '. + {
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"import": "./dist/index.js",
-				"require": "./dist/index.cjs"
+	jq \
+		--arg name "@repo/design-tokens" \
+		--arg description "Design tokens for the ${ORGANIZATION_NAME} Design System (Style Dictionary + DTCG)" \
+		--arg author "${DEVELOPER}" \
+		'. + {
+			name: $name,
+			version: "1.0.0",
+			description: $description,
+			author: $author,
+			license: "LGPL-3.0-or-later",
+			type: "module",
+			private: true,
+			exports: {
+				".": {
+					"types": "./dist/index.d.ts",
+					"import": "./dist/index.js",
+					"require": "./dist/index.cjs"
+				},
+				"./css": "./dist/tokens.css",
+				"./tailwind": {
+					"types": "./dist/tailwind.d.ts",
+					"import": "./dist/tailwind.js",
+					"require": "./dist/tailwind.cjs"
+				},
+				"./tailwind-theme": "./dist/tailwind-theme.css"
 			},
-			"./css": "./dist/tokens.css",
-			"./tailwind": {
-				"types": "./dist/tailwind.d.ts",
-				"import": "./dist/tailwind.js",
-				"require": "./dist/tailwind.cjs"
+			files: ["dist"],
+			scripts: {
+				"build": "style-dictionary build --config sd.config.js",
+				"build:watch": "chokidar \"tokens/**/*.json\" -c \"pnpm build\"",
+				"clean": "rm -rf dist",
+				"typecheck": "tsc --noEmit"
 			},
-			"./tailwind-theme": "./dist/tailwind-theme.css"
-		},
-		"files": ["dist"],
-		"scripts": {
-			"build": "style-dictionary build --config sd.config.js",
-			"build:watch": "chokidar \"tokens/**/*.json\" -c \"pnpm build\"",
-			"clean": "rm -rf dist",
-			"typecheck": "tsc --noEmit"
-		},
-		"devDependencies": {
-			"chokidar-cli": "catalog:",
-			"style-dictionary": "catalog:",
-			"typescript": "catalog:"
-		}
-	}' package.json >package.json.tmp && mv package.json.tmp package.json
+			devDependencies: {
+				"chokidar-cli": "catalog:",
+				"style-dictionary": "catalog:",
+				"typescript": "catalog:"
+			}
+		}' package.json >package.json.tmp && mv package.json.tmp package.json
 
 	log_success "@repo/design-tokens package created"
 }
