@@ -77,6 +77,31 @@ import { register as registerTokensStudio } from '@tokens-studio/sd-transforms'
 function registerTransforms() {
 	registerTokensStudio(StyleDictionary)
 
+	// Tokens Studio applies a unitless line height or letter spacing as pixels;
+	// in CSS a bare line height is a multiplier and a bare letter spacing is
+	// invalid. Runs before `expand`, so it also fixes typography properties.
+	const UNITLESS_PX_TYPES = new Set(['lineHeights', 'lineHeight', 'letterSpacing'])
+	const toPx = (value) => (/^-?(\d+\.?\d*|\.\d+)$/.test(String(value).trim()) && Number(value) !== 0 ? `${String(value).trim()}px` : value)
+	StyleDictionary.registerPreprocessor({
+		name: 'unitless-px',
+		preprocessor: (dictionary) => {
+			const walk = (node) => {
+				if (!node || typeof node !== 'object') return
+				const key = '$value' in node ? '$value' : 'value' in node ? 'value' : null
+				if (!key) return Object.values(node).forEach(walk)
+				const type = node.$type ?? node.type
+				if (UNITLESS_PX_TYPES.has(type)) node[key] = toPx(node[key])
+				if (type === 'typography' && node[key] && typeof node[key] === 'object') {
+					for (const property of ['lineHeight', 'letterSpacing']) {
+						if (property in node[key]) node[key][property] = toPx(node[key][property])
+					}
+				}
+			}
+			walk(dictionary)
+			return dictionary
+		},
+	})
+
 	// Tokens Studio exports Figma "Auto" line height as `AUTO`, which is invalid CSS.
 	StyleDictionary.registerTransform({
 		name: 'value/line-height-auto',
@@ -397,12 +422,20 @@ import { getPlatformsForBrand } from './platformConfigs.mjs'
 
 // sd-transforms leaves composition padding and size properties untyped, so
 // they would lose their `px` unit.
-const COMPOSITION_DIMENSIONS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'horizontalPadding', 'verticalPadding', 'itemSpacing', 'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight']
+const COMPOSITION_DIMENSIONS = [
+	'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'horizontalPadding', 'verticalPadding', 'itemSpacing',
+	'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'fontSizes', 'backgroundBlur',
+	'borderRadiusTopLeft', 'borderRadiusTopRight', 'borderRadiusBottomRight', 'borderRadiusBottomLeft',
+	'borderWidthTop', 'borderWidthRight', 'borderWidthBottom', 'borderWidthLeft',
+]
 const TYPES_MAP = {
 	...expandTypesMap,
 	composition: {
 		...expandTypesMap.composition,
 		...Object.fromEntries(COMPOSITION_DIMENSIONS.map((property) => [property, 'dimension'])),
+		fontWeights: 'fontWeight',
+		lineHeights: 'lineHeight',
+		fontFamilies: 'fontFamily',
 	},
 }
 
@@ -468,7 +501,7 @@ async function buildBrands(brands, options) {
 				// Style Dictionary reads `source` entries as globs: escape set names
 				// and paths such as `[Brand] A`.
 				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
-				preprocessors: ['tokens-studio'],
+				preprocessors: ['unitless-px', 'tokens-studio'],
 				// One variable per property: the CSS `font` shorthand cannot hold
 				// `letterSpacing` and friends, and composition has no CSS form.
 				expand: { include: ['typography', 'composition'], typesMap: TYPES_MAP },
@@ -524,6 +557,23 @@ import { fileURLToPath } from 'node:url'
  */
 
 /**
+ * Return the token format of the first token found, or `undefined` if none.
+ * @param {unknown} node
+ * @returns {'dtcg' | 'legacy' | undefined}
+ */
+function detectFormat(node) {
+	if (!node || typeof node !== 'object') return undefined
+	if ('$value' in node) return 'dtcg'
+	if ('value' in node && 'type' in node) return 'legacy'
+	for (const [key, child] of Object.entries(node)) {
+		if (key.startsWith('$')) continue
+		const format = detectFormat(child)
+		if (format) return format
+	}
+	return undefined
+}
+
+/**
  * Read and merge all source files, split by top-level keys, and write per-set files.
  *
  * @param {SplitOptions} options
@@ -539,6 +589,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 	// Read and merge all source files into one token map.
 	const tokens = {}
 	const setSource = new Map()
+	const formatSource = new Map()
 	for (const inputFile of inputFiles) {
 		console.log(`[split] source:  ${inputFile}`)
 		let raw
@@ -556,6 +607,17 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 			parsed = JSON.parse(raw)
 		} catch (error) {
 			throw new Error(`Invalid JSON in ${inputFile}: ${error.message}`)
+		}
+
+		if (!parsed.$metadata) {
+			throw new Error(`${inputFile} has no $metadata. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
+		}
+		// Style Dictionary picks DTCG or legacy once per build and drops tokens
+		// in the other format.
+		const format = detectFormat(parsed)
+		if (format) formatSource.set(format, formatSource.get(format) ?? inputFile)
+		if (formatSource.size > 1) {
+			throw new Error(`${formatSource.get('dtcg')} uses DTCG $value/$type and ${formatSource.get('legacy')} uses legacy value/type. Export all inputFiles in one format.`)
 		}
 
 		for (const [key, value] of Object.entries(parsed)) {
@@ -766,7 +828,9 @@ EOF
  * `lib/platformConfigs.mjs`, register it in `PLATFORM_FACTORIES` and add its
  * key to `platforms`. Path keys (`sourcePathPrefix`, `buildPathPrefix`,
  * `tempDir`) default to `tokens/`, `dist/` and `temp/`; `tempDir` must not be
- * inside `buildPathPrefix`.
+ * inside `buildPathPrefix`. The build deletes and recreates `buildPathPrefix`
+ * on every run, so point it only at a folder the build owns. The package
+ * `exports` assume `dist/`; update them if you move it.
  */
 
 export default {
@@ -1097,7 +1161,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Use one format across all `inputFiles`: references from a legacy file do not resolve into a DTCG file.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build.
 
 ### Adding a new brand
 
