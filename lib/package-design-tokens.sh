@@ -77,8 +77,18 @@ import { register as registerTokensStudio } from '@tokens-studio/sd-transforms'
 function registerTransforms() {
 	registerTokensStudio(StyleDictionary)
 
-	// CSS platforms run this after the `tokens-studio` group, which has already
-	// turned typography, shadow and border composites into strings.
+	// Tokens Studio exports Figma "Auto" line height as `AUTO`, which is invalid CSS.
+	StyleDictionary.registerTransform({
+		name: 'value/line-height-auto',
+		type: 'value',
+		transitive: true,
+		filter: (token) => (token.$type ?? token.type) === 'lineHeight' && String(token.$value ?? token.value).toUpperCase() === 'AUTO',
+		transform: () => 'normal',
+	})
+
+	// CSS platforms run this after the `tokens-studio` group. Typography and
+	// composition are expanded before; the group turns shadow and border
+	// composites into strings. Anything still an object fails here.
 	StyleDictionary.registerTransform({
 		name: 'value/css-serializable',
 		type: 'value',
@@ -149,7 +159,7 @@ export function createTailwindCssPlatform(buildPath) {
 	return {
 		buildPath: buildPath.endsWith('/') ? buildPath : `${buildPath}/`,
 		transformGroup: 'tokens-studio',
-		transforms: ['name/kebab', 'value/css-serializable'],
+		transforms: ['name/kebab', 'value/line-height-auto', 'value/css-serializable'],
 		files: [
 			{
 				destination: 'tailwind-theme.css',
@@ -170,7 +180,7 @@ export function createCssVarsPlatform(buildPath) {
 	return {
 		buildPath: buildPath.endsWith('/') ? buildPath : `${buildPath}/`,
 		transformGroup: 'tokens-studio',
-		transforms: ['name/kebab', 'value/css-serializable'],
+		transforms: ['name/kebab', 'value/line-height-auto', 'value/css-serializable'],
 		files: [
 			{
 				destination: 'tokens.css',
@@ -385,6 +395,17 @@ import { expandTypesMap } from '@tokens-studio/sd-transforms'
 
 import { getPlatformsForBrand } from './platformConfigs.mjs'
 
+// sd-transforms leaves composition padding and size properties untyped, so
+// they would lose their `px` unit.
+const COMPOSITION_DIMENSIONS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'horizontalPadding', 'verticalPadding', 'itemSpacing', 'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight']
+const TYPES_MAP = {
+	...expandTypesMap,
+	composition: {
+		...expandTypesMap.composition,
+		...Object.fromEntries(COMPOSITION_DIMENSIONS.map((property) => [property, 'dimension'])),
+	},
+}
+
 /**
  * @typedef {object} BuildOptions
  * @property {string} buildPathPrefix
@@ -444,11 +465,13 @@ async function buildBrands(brands, options) {
 		// (e.g. token collisions) reject here instead of as an unhandled rejection.
 		const sd = new StyleDictionary(
 			{
-				source: sourceFiles,
+				// Style Dictionary reads `source` entries as globs: escape set names
+				// and paths such as `[Brand] A`.
+				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
 				preprocessors: ['tokens-studio'],
-				// Split typography into one variable per property: the CSS `font`
-				// shorthand cannot hold `letterSpacing` and friends.
-				expand: { include: ['typography'], typesMap: expandTypesMap },
+				// One variable per property: the CSS `font` shorthand cannot hold
+				// `letterSpacing` and friends, and composition has no CSS form.
+				expand: { include: ['typography', 'composition'], typesMap: TYPES_MAP },
 				platforms,
 				log: {
 					// Token collisions and empty output files mean wrong or missing CSS.
@@ -461,6 +484,9 @@ async function buildBrands(brands, options) {
 		)
 
 		await sd.init()
+		if (Object.keys(sd.tokens ?? {}).length === 0) {
+			throw new Error(`[${brand}] loaded no tokens from ${sourceFiles.length} set file(s).`)
+		}
 		await sd.buildAllPlatforms()
 		console.log(`[${brand}] built platforms: ${Object.keys(platforms).join(', ')}`)
 	}
@@ -512,6 +538,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	// Read and merge all source files into one token map.
 	const tokens = {}
+	const setSource = new Map()
 	for (const inputFile of inputFiles) {
 		console.log(`[split] source:  ${inputFile}`)
 		let raw
@@ -532,9 +559,10 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		}
 
 		for (const [key, value] of Object.entries(parsed)) {
-			if (key in tokens && !key.startsWith('$')) {
-				console.warn(`[split] duplicate top-level key "${key}" in ${inputFile} — overwriting`)
+			if (!key.startsWith('$') && setSource.has(key)) {
+				throw new Error(`Set "${key}" is in both ${setSource.get(key)} and ${inputFile}. Rename one of them in Tokens Studio.`)
 			}
+			setSource.set(key, inputFile)
 			tokens[key] = value
 		}
 	}
@@ -569,6 +597,9 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		if (!setValue || typeof setValue !== 'object' || Object.keys(setValue).length === 0) {
 			console.warn(`[split] skipping "${key}" — empty or non-object set`)
 			continue
+		}
+		if ('value' in setValue || '$value' in setValue) {
+			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
 
 		const filename = `${key.replace(/\//g, '_')}.json`
@@ -622,7 +653,7 @@ EOF
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
- *   --skip-split                    Reuse existing temp/ contents.
+ *   --skip-split                    Reuse existing temp/ contents. Not with --source.
  *   --verbose                       Verbose Style Dictionary logging.
  */
 
@@ -701,7 +732,7 @@ const exec = async (argv = []) => {
 		await buildBrands(brands, { buildPathPrefix: stagingPath, tempDir, platforms, brandSets, verbose: cli.verbose })
 	} catch (error) {
 		await fs.rm(stagingPath, { recursive: true, force: true })
-		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}`)
+		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}\nRerun with --verbose for details.`)
 		process.exit(1)
 	}
 	try {
@@ -732,7 +763,10 @@ EOF
  *
  * To add a brand: append to `brands` and (optionally) configure per-brand
  * set inclusion via `brandSets`. To add a platform: implement a factory in
- * `lib/platformConfigs.mjs` and add its key here.
+ * `lib/platformConfigs.mjs`, register it in `PLATFORM_FACTORIES` and add its
+ * key to `platforms`. Path keys (`sourcePathPrefix`, `buildPathPrefix`,
+ * `tempDir`) default to `tokens/`, `dist/` and `temp/`; `tempDir` must not be
+ * inside `buildPathPrefix`.
  */
 
 export default {
@@ -757,9 +791,9 @@ export default {
 	/**
 	 * Token source files. The splitter reads all files, merges their top-level
 	 * sets into a single map, then writes one temp file per set. Paths are
-	 * relative to `tokens/` (or absolute). Files merge in order: a later file
-	 * overwrites a duplicate top-level set from an earlier one. `pnpm build
-	 * --source=PATH` replaces the first entry only.
+	 * relative to `tokens/` (or absolute). Each file must be a single-file
+	 * Tokens Studio export; a set name in two files fails the build. `pnpm
+	 * build --source=PATH` replaces the first entry only.
 	 */
 	inputFiles: ['primitive-design-tokens.json'],
 
@@ -998,7 +1032,7 @@ Edit `token-config.js`:
 | ------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `brands`      | `string[]`                 | One bundle per brand. The first brand → `dist/` (the `css` and `tailwind-theme` exports). Further brands → `dist/<brand>/`.                     |
 | `platforms`   | `string[]`                 | Output formats. Known keys: `tailwind-css`, `css-vars`, `js`.                                                                                      |
-| `inputFiles`  | `string[]`                 | Source JSON files (relative to `tokens/` or absolute). Read & merged in order.                                                                     |
+| `inputFiles`  | `string[]`                 | Single-file Tokens Studio exports (relative to `tokens/` or absolute), merged. A set name in two files fails the build.                         |
 | `excludeKeys` | `string[]`                 | Top-level sets to drop before splitting (e.g. an unused `global`). `$`-prefixed metadata is always dropped. Mutually exclusive with `includeKeys`.         |
 | `includeKeys` | `string[]`                 | If non-empty, ONLY these top-level keys are split.                                                                                                 |
 | `brandSets`   | `Record<string, string[]>` | Per-brand selection of split-file basenames (without `.json`). Slashes in set names become underscores. No entry → use all. Unknown names and set collisions fail the build. |
