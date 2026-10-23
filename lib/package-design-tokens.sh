@@ -127,6 +127,11 @@ function registerTransforms() {
 				for (const property of NESTED_LINE_HEIGHTS[type]) {
 					if (property in value && isRelativeAtSource(value[property])) relativeLineHeightPaths.add(`${path}.${property}`)
 				}
+				// A composition can hold a whole typography, expanded to `<path>.typography.lineHeight`.
+				const typography = type === 'composition' ? resolveAlias(value.typography) : undefined
+				if (typography && typeof typography === 'object' && isRelativeAtSource(typography.lineHeight)) {
+					relativeLineHeightPaths.add(`${path}.typography.lineHeight`)
+				}
 			}
 			return dictionary
 		},
@@ -701,7 +706,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 	if (includeKeys.length > 0) {
 		const missing = includeKeys.filter((key) => !allKeys.includes(key))
 		if (missing.length > 0) throw new Error(`splitDesignTokens: includeKeys not found in source: ${missing.join(', ')}`)
-		keysToProcess = includeKeys
+		keysToProcess = includeKeys.filter((key) => !key.startsWith('$'))
 	} else if (excludeKeys.length > 0) {
 		keysToProcess = keysToProcess.filter((key) => !excludeKeys.includes(key))
 	}
@@ -864,7 +869,7 @@ const exec = async (argv = []) => {
 		await buildBrands(brands, { buildPathPrefix: stagingPath, tempDir, platforms, brandSets, verbose: cli.verbose })
 	} catch (error) {
 		await fs.rm(stagingPath, { recursive: true, force: true })
-		const hint = /Token collisions detected/.test(error.message) ? '\nLoading two theme sets of one brand collides: list one theme set per brand in brandSets.' : ''
+		const hint = /Token collisions detected/.test(error.message) ? '\nTwo loaded sets define the same token path. Overrides between sets are not supported: list one set per path (e.g. one theme set per brand) in brandSets.' : ''
 		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}${hint}\nRerun with --verbose for details.`)
 		process.exit(1)
 	}
@@ -1234,7 +1239,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography token that aliases another, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, as in the sample). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography token that aliases another, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
 
 ### Adding a new brand
 

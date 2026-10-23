@@ -14,7 +14,7 @@ Bash CLI that scaffolds a TypeScript monorepo for design systems — Turborepo, 
 │   │   ├── eslint/
 │   │   ├── prettier/
 │   │   └── typescript/
-│   ├── design-tokens/        # Style Dictionary + DTCG format
+│   ├── design-tokens/        # Tokens Studio + Style Dictionary
 │   └── ui-react/             # React component library
 ├── pnpm-workspace.yaml       # Centralized pnpm catalog
 ├── turbo.json
