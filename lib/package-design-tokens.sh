@@ -860,10 +860,12 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
 		const filename = `${key.replace(/\//g, '_')}.json`
-		if (setByFilename.has(filename)) {
-			throw new Error(`splitDesignTokens: sets "${setByFilename.get(filename)}" and "${key}" both map to ${filename}. Rename one of them.`)
+		// Lower case: macOS and Windows file systems treat Core.json and core.json as one file.
+		const fileKey = filename.toLowerCase()
+		if (setByFilename.has(fileKey)) {
+			throw new Error(`splitDesignTokens: sets "${setByFilename.get(fileKey)}" and "${key}" both map to ${filename}. Rename one of them.`)
 		}
-		setByFilename.set(filename, key)
+		setByFilename.set(fileKey, key)
 	}
 
 	await fs.mkdir(outputDir, { recursive: true })
@@ -919,9 +921,9 @@ EOF
  * @fileoverview
  * `pnpm build:watch`: runs `pnpm build` once, then again on each change to
  * the configured input files, `token-config.js`, `lib/` or `scripts/`.
- * onchange queues the runs, so the last change wins. The watch list comes
- * from `token-config.js`: restart after changing `inputFiles` or
- * `sourcePathPrefix`.
+ * onchange runs one build at a time and queues one run per change event, so
+ * the last run sees the latest files. The watch list and the excludes come
+ * from `token-config.js`: restart after changing its path keys.
  *
  * Uses onchange's API in this process: no shell quoting, no PATH lookup,
  * and no child watcher left behind when this process is killed. Paths are
@@ -956,13 +958,22 @@ const isUnder = (file, dir) => {
 	return !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
+const matches = [...configManager.getInputFilePaths(), 'token-config.js', 'lib', 'scripts']
 onchange({
 	cwd: PACKAGE_ROOT,
-	matches: [...configManager.getInputFilePaths(), 'token-config.js', 'lib', 'scripts'],
-	// The build writes these: watching them would rebuild forever.
-	exclude: [(file) => isUnder(file, tempDir) || isUnder(file, buildPathPrefix)],
+	matches,
+	// The build writes tempDir and buildPathPrefix; editors write swap and temp
+	// files next to the sources. Neither should start a build.
+	exclude: [
+		(file) =>
+			isUnder(file, tempDir) ||
+			isUnder(file, buildPathPrefix) ||
+			((isUnder(file, 'lib') || isUnder(file, 'scripts')) && path.extname(file) !== '' && path.extname(file) !== '.mjs'),
+	],
 	initial: true,
 	command: ['pnpm', 'build'],
+	// onchange only logs watcher errors (e.g. ENOSPC) in verbose mode: show what is watched.
+	onReady: () => console.log(`[design-tokens] watching ${matches.length} path(s): ${matches.join(', ')}`),
 })
 EOF
 
@@ -981,8 +992,8 @@ EOF
  *      build leaves the previous `dist/` in place.
  *
  * One build at a time: `temp/.build-lock` (lib/buildLock.mjs) makes an
- * overlapping build or split fail. `pnpm build:watch` (onchange) queues its
- * runs, so the last change wins.
+ * overlapping build or split fail. `pnpm build:watch` (onchange) runs one
+ * build at a time, so the last run sees the latest files.
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
@@ -1425,7 +1436,7 @@ import { colorPrimary500 } from "@repo/design-tokens";
 # Full pipeline: split + per-brand Style Dictionary build
 pnpm build
 
-# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (runs queue; restart after changing inputFiles)
+# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (one build at a time; restart after changing path keys in token-config.js)
 pnpm build:watch
 
 # Run just the splitter (debugging)

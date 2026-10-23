@@ -14,9 +14,6 @@ This is a **Bash-based monorepo generator** for creating design systems. It scaf
 # Main entry point — creates a full design system monorepo
 ./bin/monorepo-init.sh --project-name my-design-system --organization my-org
 
-# Alternative monolithic script (older pattern)
-./bin/setup-monorepo.sh
-
 # Helper for adding deps to generated monorepos
 ./bin/add-dependency.sh
 ```
@@ -35,7 +32,6 @@ pnpm test   # builds the design tokens pipeline against tests/fixtures/design-to
 The generator is organized as a modular Bash library:
 
 - **`bin/monorepo-init.sh`** — Main orchestrator. Sources all `lib/` modules and runs them in sequence.
-- **`bin/setup-monorepo.sh`** — Older monolithic version of the same flow.
 - **`lib/utils.sh`** — Logging, argument parsing, shared helpers.
 - **`lib/prerequisites.sh`** — Validates required tools (pnpm, yq, jq, Node).
 - **`lib/repository.sh`** — Turbo repo init via `pnpm dlx create-turbo@latest`, workspace setup, renames `@repo/ui` → `@repo/ui-react`.
