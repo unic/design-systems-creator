@@ -7,7 +7,9 @@
 # builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
 # CSS output (including every variable the Storybook stories use), builds two
 # brands, and checks that colliding themes, mixed formats and an overlapping
-# build fail. Needs network for `pnpm add`.
+# build fail. Pins style-dictionary@5 and @tokens-studio/sd-transforms@2;
+# generated repos resolve the latest versions through the catalog. Needs
+# network for `pnpm add`.
 
 set -euo pipefail
 
@@ -136,7 +138,18 @@ set_inputs "'primitive-design-tokens.json'"
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
 echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"
 expect_build_failure "overlapping build" "Another build (pid $$)"
-rm -rf "$PACKAGE_DIR/temp/.build-lock"
+
+sleep 0 &
+DEAD_PID=$!
+wait "$DEAD_PID"
+echo "$DEAD_PID" >"$PACKAGE_DIR/temp/.build-lock/pid"
+build_with_inputs "'primitive-design-tokens.json'"
+if [[ -e "$PACKAGE_DIR/temp/.build-lock" ]]; then
+	echo "FAIL  stale lock: still present after the build"
+	FAILURES=$((FAILURES + 1))
+else
+	echo "ok    stale lock taken over and released"
+fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	log_error "$FAILURES design tokens check(s) failed"
