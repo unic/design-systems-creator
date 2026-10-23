@@ -86,7 +86,8 @@ function registerTransforms() {
 	// see the alias target, and after `ts/resolveMath` / `ts/size/lineheight` a
 	// relative `1.5` and a computed `24` are both plain numbers. Covers the
 	// line height inside typography and composition values, which `expand`
-	// turns into tokens at `<path>.lineHeight` / `<path>.lineHeights`.
+	// turns into tokens at `<path>.lineHeight` / `<path>.lineHeights` /
+	// `<path>.typography.lineHeight`.
 	const relativeLineHeightPaths = new Set()
 	const NESTED_LINE_HEIGHTS = { typography: ['lineHeight'], composition: ['lineHeight', 'lineHeights'] }
 	StyleDictionary.registerPreprocessor({
@@ -424,7 +425,18 @@ class ConfigManager {
 		if (unknown.length > 0) {
 			throw new Error(`Unknown token-config.js key(s): ${unknown.join(', ')}. Known: ${Object.keys(DEFAULT_CONFIG).join(', ')}`)
 		}
-		Object.assign(this.config, userConfig)
+		const config = { ...userConfig }
+		for (const key of ['brands', 'platforms', 'excludeKeys', 'includeKeys', 'inputFiles']) {
+			if (key in config && !Array.isArray(config[key])) throw new Error(`token-config.js ${key} must be an array.`)
+		}
+		for (const [brand, sets] of Object.entries(config.brandSets ?? {})) {
+			if (!Array.isArray(sets)) throw new Error(`token-config.js brandSets.${brand} must be an array of set names.`)
+		}
+		// Relative path keys resolve against the package, not the working directory.
+		for (const key of ['sourcePathPrefix', 'buildPathPrefix', 'tempDir']) {
+			if (key in config) config[key] = path.resolve(PACKAGE_ROOT, config[key])
+		}
+		Object.assign(this.config, config)
 		return this.config
 	}
 
@@ -725,7 +737,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 	}
 
 	await fs.mkdir(outputDir, { recursive: true })
-	// Wipe the temp dir so removed sets don't linger between runs.
+	// Remove old set files so removed sets don't linger between runs.
 	for (const entry of await fs.readdir(outputDir)) {
 		if (entry.endsWith('.json')) await fs.rm(path.join(outputDir, entry))
 	}
@@ -903,8 +915,8 @@ EOF
  * set inclusion via `brandSets`. To add a platform: implement a factory in
  * `lib/platformConfigs.mjs`, register it in `PLATFORM_FACTORIES` and add its
  * key to `platforms`. Path keys (`sourcePathPrefix`, `buildPathPrefix`,
- * `tempDir`) default to `tokens/`, `dist/` and `temp/`; use absolute paths,
- * and note that `pnpm clean` only removes the defaults. `tempDir` must not be
+ * `tempDir`) default to `tokens/`, `dist/` and `temp/` and resolve against
+ * the package folder; `pnpm clean` only removes the defaults. `tempDir` must not be
  * inside `buildPathPrefix`. The build deletes and recreates `buildPathPrefix`
  * on every run, so point it only at a folder the build owns. The package
  * `exports` assume `dist/`; update them if you move it.
@@ -933,7 +945,7 @@ export default {
 	/**
 	 * Token source files. The splitter reads all files, merges their top-level
 	 * sets into a single map, then writes one temp file per set. Paths are
-	 * relative to `tokens/` (or absolute). Each file must be a single-file
+	 * relative to `sourcePathPrefix` (default `tokens/`) or absolute. Each file must be a single-file
 	 * Tokens Studio export; a set name in two files fails the build. `pnpm
 	 * build --source=PATH` replaces the first entry only.
 	 */
@@ -1174,7 +1186,7 @@ Edit `token-config.js`:
 | ------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `brands`      | `string[]`                 | One bundle per brand. The first brand → `dist/` (the `css` and `tailwind-theme` exports). Further brands → `dist/<brand>/`.                     |
 | `platforms`   | `string[]`                 | Output formats. Known keys: `tailwind-css`, `css-vars`, `js`.                                                                                      |
-| `inputFiles`  | `string[]`                 | Single-file Tokens Studio exports (relative to `tokens/` or absolute), merged. A set name in two files fails the build.                         |
+| `inputFiles`  | `string[]`                 | Single-file Tokens Studio exports (relative to `sourcePathPrefix`, default `tokens/`, or absolute), merged. A set name in two files fails the build. |
 | `excludeKeys` | `string[]`                 | Top-level sets to drop before splitting (e.g. an unused `global`). `$`-prefixed metadata is always dropped. Mutually exclusive with `includeKeys`.         |
 | `includeKeys` | `string[]`                 | If non-empty, ONLY these top-level keys are split.                                                                                                 |
 | `brandSets`   | `Record<string, string[]>` | Per-brand selection of split-file basenames (without `.json`). Slashes in set names become underscores. No entry → use all. Unknown names and set collisions fail the build. |
