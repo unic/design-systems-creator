@@ -82,6 +82,8 @@ function registerTransforms() {
 	StyleDictionary.registerTransform({
 		name: 'value/css-serializable',
 		type: 'value',
+		// Composites almost always hold references; run on those too.
+		transitive: true,
 		filter: (token) => typeof (token.$value ?? token.value) === 'object',
 		transform: (token) => {
 			const value = token.$value ?? token.value
@@ -130,7 +132,10 @@ EOF
  * — see https://github.com/orioltf/poc-tokens for examples.
  */
 
-import { outputReferencesFilter } from 'style-dictionary/utils'
+import { outputReferencesFilter, outputReferencesTransformed } from 'style-dictionary/utils'
+
+/** @param {any} token */
+const isPureAlias = (token) => /^\{[^{}]+\}$/.test(String(token.original.$value ?? token.original.value).trim())
 
 /**
  * Tailwind v4 `@theme` block CSS. This is the primary runtime contract.
@@ -171,11 +176,14 @@ export function createCssVarsPlatform(buildPath) {
 				destination: 'tokens.css',
 				format: 'css/variables',
 				options: {
-					// Keep `var(--ref-name)` only when the referenced token is in this
-					// file's output; inline the value otherwise (e.g. when a filter
-					// drops the target). Missing references fail the build instead.
-					// https://styledictionary.com/reference/utils/references/#outputreferencesfilter
-					outputReferences: outputReferencesFilter,
+					// Keep `var(--ref-name)` only for a pure alias (`{a.b}`) whose target
+					// is in this file's output and whose value no transform changed
+					// (e.g. color modifiers). Inline everything else, such as Tokens
+					// Studio math (`-{a} * 2`), which would be invalid CSS around a
+					// `var()`. Missing references fail the build instead.
+					// https://styledictionary.com/reference/utils/references/
+					outputReferences: (token, options) =>
+						isPureAlias(token) && outputReferencesFilter(token, options) && outputReferencesTransformed(token, options),
 				},
 			},
 		],
@@ -373,6 +381,7 @@ import path from 'node:path'
 import { existsSync, readdirSync } from 'node:fs'
 
 import StyleDictionary from 'style-dictionary'
+import { expandTypesMap } from '@tokens-studio/sd-transforms'
 
 import { getPlatformsForBrand } from './platformConfigs.mjs'
 
@@ -437,6 +446,9 @@ async function buildBrands(brands, options) {
 			{
 				source: sourceFiles,
 				preprocessors: ['tokens-studio'],
+				// Split typography into one variable per property: the CSS `font`
+				// shorthand cannot hold `letterSpacing` and friends.
+				expand: { include: ['typography'], typesMap: expandTypesMap },
 				platforms,
 				log: {
 					// Token collisions and empty output files mean wrong or missing CSS.
@@ -605,8 +617,8 @@ EOF
  *   2. Split the configured `inputFiles` into per-set files in `temp/`.
  *   3. For each configured brand, run Style Dictionary against the relevant
  *      set files for the configured platforms, into `temp/dist-staging/`.
- *   4. Replace `dist/` with the staging directory. A failed build leaves the
- *      previous `dist/` in place.
+ *   4. Replace `dist/` with the staging directory. A failed Style Dictionary
+ *      build leaves the previous `dist/` in place.
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
@@ -757,12 +769,13 @@ export default {
 	 * `$`-prefixed Tokens Studio metadata (`$themes`, `$metadata`) is always
 	 * skipped.
 	 *
-	 * - `excludeKeys`: drop these top-level sets before splitting. `global`
-	 *   is listed so the conventional empty `global` set is not split.
+	 * - `excludeKeys`: drop these top-level sets before splitting. Tokens
+	 *   Studio puts new tokens in `global`, so exclude it only when it is empty
+	 *   or unused.
 	 * - `includeKeys`: if non-empty, ONLY these sets are split. Mutually
 	 *   exclusive with `excludeKeys`, so empty `excludeKeys` when you set it.
 	 */
-	excludeKeys: ['global'],
+	excludeKeys: [],
 	includeKeys: [],
 
 	/**
@@ -782,6 +795,8 @@ export default {
 	brandSets: {},
 }
 EOF
+
+	printf 'dist/\ntemp/\n' >.gitignore
 
 	log_success "Design tokens build pipeline added"
 }
@@ -968,8 +983,8 @@ design-tokens/
 │   └── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
-├── temp/                             # Per-set intermediate files (gitignored)
-├── dist/                             # Build outputs (gitignored)
+├── temp/                             # Per-set intermediate files (package .gitignore)
+├── dist/                             # Build outputs (package .gitignore)
 ├── token-config.js                   # User-editable build config
 ├── tsconfig.json
 └── package.json
@@ -984,7 +999,7 @@ Edit `token-config.js`:
 | `brands`      | `string[]`                 | One bundle per brand. The first brand → `dist/` (the `css` and `tailwind-theme` exports). Further brands → `dist/<brand>/`.                     |
 | `platforms`   | `string[]`                 | Output formats. Known keys: `tailwind-css`, `css-vars`, `js`.                                                                                      |
 | `inputFiles`  | `string[]`                 | Source JSON files (relative to `tokens/` or absolute). Read & merged in order.                                                                     |
-| `excludeKeys` | `string[]`                 | Top-level sets to drop before splitting (e.g. `global`). `$`-prefixed metadata is always dropped. Mutually exclusive with `includeKeys`.         |
+| `excludeKeys` | `string[]`                 | Top-level sets to drop before splitting (e.g. an unused `global`). `$`-prefixed metadata is always dropped. Mutually exclusive with `includeKeys`.         |
 | `includeKeys` | `string[]`                 | If non-empty, ONLY these top-level keys are split.                                                                                                 |
 | `brandSets`   | `Record<string, string[]>` | Per-brand selection of split-file basenames (without `.json`). Slashes in set names become underscores. No entry → use all. Unknown names and set collisions fail the build. |
 
@@ -1048,7 +1063,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename, or delete the sample. Use one format across all `inputFiles`: references from a legacy file do not resolve into a DTCG file.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Use one format across all `inputFiles`: references from a legacy file do not resolve into a DTCG file.
 
 ### Adding a new brand
 
