@@ -3,9 +3,10 @@
 # =============================================================================
 # Design tokens regression check
 # =============================================================================
-# Generates the @repo/design-tokens package into a temp folder, builds the
-# fixture exports in tests/fixtures/design-tokens/ and checks the CSS values
-# that earlier review rounds got wrong. Needs network access for `pnpm add`.
+# Generates the design tokens build pipeline and sample into a temp folder,
+# builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
+# CSS output (including every variable the Storybook stories use) and checks
+# that colliding themes and mixed formats fail. Needs network for `pnpm add`.
 
 set -euo pipefail
 
@@ -54,6 +55,10 @@ set_inputs() {
 build_with_inputs() {
 	set_inputs "$1"
 	(cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs >/dev/null)
+	if grep -nE 'undefined|NaN|\[object Object\]|pxpx' "$PACKAGE_DIR"/dist/*.css; then
+		echo "FAIL  $1: invalid value in dist/"
+		FAILURES=$((FAILURES + 1))
+	fi
 }
 
 mkdir -p "$PACKAGE_DIR"
@@ -61,12 +66,17 @@ add_design_tokens_config >/dev/null
 add_design_tokens_sample >/dev/null
 cp "$FIXTURES_DIR"/*.json "$PACKAGE_DIR/tokens/"
 echo '{ "name": "design-tokens-test", "type": "module", "private": true }' >"$PACKAGE_DIR/package.json"
-(cd "$PACKAGE_DIR" && pnpm add --silent style-dictionary @tokens-studio/sd-transforms)
+(cd "$PACKAGE_DIR" && pnpm add --silent style-dictionary@5 @tokens-studio/sd-transforms@2)
 
 build_with_inputs "'primitive-design-tokens.json'"
+STORYBOOK_VARIABLES="$(grep -ohE 'var\(--[a-z0-9-]+' "$ROOT_DIR/lib/package-storybook.sh" | sort -u | sed 's/var(//')"
+if [[ -z "$STORYBOOK_VARIABLES" ]]; then
+	echo "FAIL  found no var(--...) in lib/package-storybook.sh"
+	FAILURES=$((FAILURES + 1))
+fi
 while read -r variable; do
 	expect_css tokens.css "$variable:"
-done < <(grep -ohE 'var\(--[a-z0-9-]+' "$ROOT_DIR/lib/package-storybook.sh" | sort -u | sed 's/var(//')
+done <<<"$STORYBOOK_VARIABLES"
 expect_css tokens.css "--semantic-accent-default: var(--color-primary-500);"
 expect_css tailwind-theme.css "--semantic-accent-default: #3b82f6;"
 
@@ -83,11 +93,14 @@ expect_css tokens.css "--typography-body-line-height: var(--line-heights-relaxed
 expect_css tokens.css "--typography-body-letter-spacing: -0.32px;"
 expect_css tokens.css "--card-padding-top: 8px 16px;"
 expect_css tokens.css "--card-line-heights: 24px;"
+expect_css tailwind-theme.css "--line-heights-computed: 24px;"
+expect_css tailwind-theme.css "--typography-heading-line-height: 24px;"
 expect_css tailwind-theme.css "--typography-body-line-height: 1.5;"
 
 build_with_inputs "'dtcg.json'"
 expect_css tokens.css "--heading-line-height: var(--scale-leading);"
 expect_css tokens.css "--heading-letter-spacing: -0.5px;"
+expect_css tokens.css "--leading-direct: 1.5;"
 
 set_inputs "'themes.json'"
 expect_build_failure "two themes of one brand collide" "list one theme set per brand in brandSets"

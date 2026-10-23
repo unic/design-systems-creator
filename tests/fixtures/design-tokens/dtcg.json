@@ -1,9 +1,19 @@
 {
-  "$metadata": { "tokenSetOrder": ["core"] },
+  "$metadata": {
+    "tokenSetOrder": [
+      "core"
+    ]
+  },
   "core": {
     "scale": {
-      "leading": { "$value": 1.5, "$type": "number" },
-      "tracking": { "$value": -0.5, "$type": "number" }
+      "leading": {
+        "$value": 1.5,
+        "$type": "number"
+      },
+      "tracking": {
+        "$value": -0.5,
+        "$type": "number"
+      }
     },
     "heading": {
       "$value": {
@@ -14,6 +24,12 @@
         "letterSpacing": "{scale.tracking}"
       },
       "$type": "typography"
+    },
+    "leading": {
+      "direct": {
+        "$value": 1.5,
+        "$type": "lineHeights"
+      }
     }
   }
 }
