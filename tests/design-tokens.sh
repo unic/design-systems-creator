@@ -135,6 +135,9 @@ expect_build_failure "mixed DTCG and legacy inputs" "Export all inputFiles in on
 set_inputs "'mixed.json'"
 expect_build_failure "mixed formats in one export" "mixes DTCG \$value/\$type and legacy value/type tokens"
 
+set_inputs "'case.json'"
+expect_build_failure "sets that differ only in case" "both map to"
+
 set_inputs "'gradient.json'"
 expect_build_failure "object values without a CSS form" "Rerun with --verbose"
 
