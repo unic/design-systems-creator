@@ -120,10 +120,11 @@ monorepo/
 ├── pnpm-workspace.yaml       # catalog: all versions defined here
 │
 ├── packages/
-│   ├── design-tokens/        # Design tokens (Style Dictionary + DTCG)
+│   ├── design-tokens/        # Design tokens (Tokens Studio + Style Dictionary)
 │   │   ├── tokens/           # Token source files (from Tokens Studio)
-│   │   ├── sd.config.js      # Style Dictionary configuration
-│   │   └── package.json      # devDeps: style-dictionary, typescript (catalog:)
+│   │   ├── lib/, scripts/    # Split + per-brand Style Dictionary build
+│   │   ├── token-config.js   # Build config (brands, platforms, sets)
+│   │   └── package.json      # devDeps: style-dictionary, @tokens-studio/sd-transforms, onchange, typescript (catalog:)
 │   │
 │   ├── tailwind-config/      # Shared Tailwind + PostCSS configuration
 │   │   ├── tailwind.config.js
