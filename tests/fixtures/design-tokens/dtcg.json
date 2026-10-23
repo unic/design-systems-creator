@@ -30,6 +30,10 @@
         "$value": 1.5,
         "$type": "lineHeights"
       }
+    },
+    "subheading": {
+      "$value": "{heading}",
+      "$type": "typography"
     }
   }
 }

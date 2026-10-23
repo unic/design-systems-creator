@@ -77,6 +77,10 @@
           "lineHeight": "{number.line}"
         },
         "type": "typography"
+      },
+      "paragraph": {
+        "value": "{typography.body}",
+        "type": "typography"
       }
     },
     "card": {
