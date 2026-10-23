@@ -35,7 +35,7 @@ create_design_tokens_package() {
 			files: ["dist"],
 			scripts: {
 				"build": "node ./scripts/build-style-dictionary.mjs",
-				"build:watch": "onchange \"tokens/**/*.json\" \"token-config.js\" \"lib/**/*.mjs\" \"scripts/**/*.mjs\" --initial -- pnpm build",
+				"build:watch": "node ./scripts/watch.mjs",
 				"split-tokens": "node ./scripts/split-design-tokens.mjs",
 				"clean": "rm -rf dist temp",
 				"typecheck": "tsc --noEmit"
@@ -193,7 +193,7 @@ function registerTransforms() {
 		filter: (token) => typeof (token.$value ?? token.value) === 'object',
 		transform: (token) => {
 			const value = token.$value ?? token.value
-			if (Array.isArray(value)) return value.join(', ')
+			if (Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object')) return value.join(', ')
 			throw new Error(`Token "${token.path.join('.')}" is still an object after expansion and has no CSS form. Only typography, composition, shadow and border composites are supported.`)
 		},
 	})
@@ -357,7 +357,7 @@ EOF
  * Dictionary build.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -389,6 +389,25 @@ const DEFAULT_CONFIG = {
 	buildPathPrefix: path.join(PACKAGE_ROOT, 'dist'),
 	tempDir: path.join(PACKAGE_ROOT, 'temp'),
 	inputFiles: ['primitive-design-tokens.json'],
+}
+
+/** Package files the build must never delete. */
+const PACKAGE_FILES = ['lib', 'scripts', 'node_modules', 'package.json', 'token-config.js', 'tsconfig.json']
+
+/**
+ * Resolve symlinks and letter case through the nearest existing folder, so
+ * `Tokens` and `tokens` compare equal where the file system does.
+ * @param {string} target
+ * @returns {string}
+ */
+const toCanonical = (target) => {
+	const missing = []
+	let existing = path.resolve(target)
+	while (!existsSync(existing)) {
+		missing.unshift(path.basename(existing))
+		existing = path.dirname(existing)
+	}
+	return path.join(realpathSync.native(existing), ...missing)
 }
 
 /** @returns {boolean} Whether `child` is `parent` or inside it. */
@@ -454,25 +473,33 @@ class ConfigManager {
 		)
 	}
 
-	/** @returns {{inputFiles: string[], outputDir: string, includeKeys: string[], excludeKeys: string[]}} */
 	/**
 	 * The build replaces buildPathPrefix and deletes the *.json files in
-	 * tempDir, so neither may hold the package or any source file.
+	 * tempDir, so neither may hold the package, its build engine, or any
+	 * source file. Paths are compared canonically (symlinks, and case on
+	 * case-insensitive file systems such as macOS).
 	 * @returns {void}
 	 */
 	validatePaths() {
-		const { buildPathPrefix, tempDir, sourcePathPrefix } = this.config
+		const buildPathPrefix = toCanonical(this.config.buildPathPrefix)
+		const tempDir = toCanonical(this.config.tempDir)
 		if (isInside(tempDir, buildPathPrefix)) {
 			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
 		}
-		const inputFiles = this.getInputFilePaths()
+		const protectedPaths = [
+			PACKAGE_ROOT,
+			this.config.sourcePathPrefix,
+			...this.getInputFilePaths(),
+			...PACKAGE_FILES.map((file) => path.join(PACKAGE_ROOT, file)),
+		].map(toCanonical)
 		for (const [key, dir] of Object.entries({ buildPathPrefix, tempDir })) {
-			if (isInside(PACKAGE_ROOT, dir) || isInside(sourcePathPrefix, dir) || inputFiles.some((file) => isInside(file, dir))) {
-				throw new Error(`${key} must not be the package folder or a parent of it, and must not hold sourcePathPrefix or an input file: the build deletes its contents.`)
+			if (protectedPaths.some((protectedPath) => isInside(protectedPath, dir))) {
+				throw new Error(`${key} must not be or hold the package folder, its lib/, scripts/, config files, sourcePathPrefix or an input file: the build deletes its contents.`)
 			}
 		}
 	}
 
+	/** @returns {{inputFiles: string[], outputDir: string, includeKeys: string[], excludeKeys: string[]}} */
 	getSplitConfig() {
 		this.validatePaths()
 		const { excludeKeys, includeKeys } = this.config
@@ -519,7 +546,7 @@ EOF
  * own runs; this lock makes any other overlap fail with a message.
  */
 
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 /** A lock without a pid younger than this may still be starting up. */
@@ -536,9 +563,10 @@ const isRunning = (pid) => {
 }
 
 /**
- * Hold `<tempDir>/.build-lock` until the process exits. A lock whose process
- * is gone, or that carries this process's own pid (a reused pid, e.g. in a
- * container), is taken over.
+ * Hold `<tempDir>/.build-lock` until the process exits. A lock is taken over
+ * when its process is gone, when it carries this process's own pid (a reused
+ * pid, e.g. in a container), or when it has no pid and is older than
+ * `STARTUP_GRACE_MS`.
  * @param {string} tempDir
  * @returns {void}
  */
@@ -553,7 +581,14 @@ function acquireBuildLock(tempDir) {
 		try {
 			pid = Number.parseInt(readFileSync(path.join(lockDir, 'pid'), 'utf8'), 10)
 		} catch {}
-		const isStarting = !(pid > 0) && Date.now() - statSync(lockDir).mtimeMs < STARTUP_GRACE_MS
+		let lockAge = 0
+		try {
+			lockAge = Date.now() - statSync(lockDir).mtimeMs
+		} catch (statError) {
+			// The holder released the lock in between: try once more.
+			if (statError.code !== 'ENOENT') throw statError
+		}
+		const isStarting = !(pid > 0) && lockAge < STARTUP_GRACE_MS && existsSync(lockDir)
 		if (isStarting || (pid > 0 && pid !== process.pid && isRunning(pid))) {
 			throw new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
 		}
@@ -811,11 +846,18 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	console.log(`[split] processing ${keysToProcess.length} set(s) from ${allKeys.length} top-level key(s)`)
 
+	// Validate everything before old set files are removed.
+	const setByFilename = new Map()
 	for (const key of keysToProcess) {
 		const setValue = tokens[key]
 		if (setValue && typeof setValue === 'object' && ('$value' in setValue || ('value' in setValue && typeof setValue.type === 'string'))) {
 			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
+		const filename = `${key.replace(/\//g, '_')}.json`
+		if (setByFilename.has(filename)) {
+			throw new Error(`splitDesignTokens: sets "${setByFilename.get(filename)}" and "${key}" both map to ${filename}. Rename one of them.`)
+		}
+		setByFilename.set(filename, key)
 	}
 
 	await fs.mkdir(outputDir, { recursive: true })
@@ -825,7 +867,6 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 	}
 
 	const generated = []
-	const setByFilename = new Map()
 	for (const key of keysToProcess) {
 		const setValue = tokens[key]
 		if (!setValue || typeof setValue !== 'object' || Object.keys(setValue).length === 0) {
@@ -834,10 +875,6 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		}
 
 		const filename = `${key.replace(/\//g, '_')}.json`
-		if (setByFilename.has(filename)) {
-			throw new Error(`splitDesignTokens: sets "${setByFilename.get(filename)}" and "${key}" both map to ${filename}. Rename one of them.`)
-		}
-		setByFilename.set(filename, key)
 		const outputPath = path.join(outputDir, filename)
 		await fs.writeFile(outputPath, JSON.stringify(setValue, null, 2))
 		console.log(`[split]  wrote ${filename}`)
@@ -871,6 +908,51 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.a
 export default splitDesignTokens
 EOF
 
+	cat >scripts/watch.mjs <<'EOF'
+/**
+ * @fileoverview
+ * `pnpm build:watch`: runs `pnpm build` once, then again on each change to
+ * the configured input files, `token-config.js`, `lib/` or `scripts/`.
+ * onchange queues the runs, so the last change wins. The watch list comes
+ * from `token-config.js`: restart after changing `inputFiles` or
+ * `sourcePathPrefix`.
+ */
+
+import { spawn } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import ConfigManager from '../lib/configManager.mjs'
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const toGlob = (file) => file.split(path.sep).join('/')
+
+const configManager = new ConfigManager()
+try {
+	await configManager.loadFromFile()
+	configManager.validatePaths()
+} catch (error) {
+	console.error(`[design-tokens] invalid config: ${error.message}`)
+	process.exit(1)
+}
+
+const { tempDir, buildPathPrefix } = configManager.config
+const watched = [
+	...configManager.getInputFilePaths(),
+	path.join(PACKAGE_ROOT, 'token-config.js'),
+	path.join(PACKAGE_ROOT, 'lib/**/*.mjs'),
+	path.join(PACKAGE_ROOT, 'scripts/**/*.mjs'),
+].map(toGlob)
+// The build writes these: watching them would rebuild forever.
+const excluded = [tempDir, buildPathPrefix].flatMap((dir) => ['--exclude', toGlob(path.join(dir, '**'))])
+
+const watcher = spawn('onchange', [...watched, ...excluded, '--initial', '--', 'pnpm', 'build'], {
+	stdio: 'inherit',
+	shell: process.platform === 'win32',
+})
+watcher.on('exit', (code) => process.exit(code ?? 1))
+EOF
+
 	cat >scripts/build-style-dictionary.mjs <<'EOF'
 /**
  * @fileoverview
@@ -881,7 +963,7 @@ EOF
  *      file is absent).
  *   2. Split the configured `inputFiles` into per-set files in `temp/`.
  *   3. For each configured brand, run Style Dictionary against the relevant
- *      set files for the configured platforms, into `temp/dist-staging/`.
+ *      set files for the configured platforms, into `<tempDir>/dist-staging/`.
  *   4. Replace `dist/` with the staging directory. A failed Style Dictionary
  *      build leaves the previous `dist/` in place.
  *
@@ -1266,7 +1348,8 @@ design-tokens/
 │   └── registerTransforms.mjs        # Preprocessors, value transforms, Tailwind format
 ├── scripts/                          # CLI entry points
 │   ├── build-style-dictionary.mjs    # Main build (split + per-brand SD run)
-│   └── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
+│   ├── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
+│   └── watch.mjs                     # `pnpm build:watch` (onchange, watch list from token-config.js)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
 ├── temp/                             # Per-set intermediate files (package .gitignore)
@@ -1329,7 +1412,7 @@ import { colorPrimary500 } from "@repo/design-tokens";
 # Full pipeline: split + per-brand Style Dictionary build
 pnpm build
 
-# Build, then rebuild on changes to tokens, token-config.js, lib/, scripts/ (runs queue, one at a time)
+# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (runs queue; restart after changing inputFiles)
 pnpm build:watch
 
 # Run just the splitter (debugging)
