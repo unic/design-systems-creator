@@ -1,0 +1,9 @@
+{
+  "$metadata": { "tokenSetOrder": ["Theme/Light", "Theme/Dark"] },
+  "Theme/Light": {
+    "surface": { "$value": "#ffffff", "$type": "color" }
+  },
+  "Theme/Dark": {
+    "surface": { "$value": "#000000", "$type": "color" }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$metadata": { "tokenSetOrder": ["core"] },
+  "core": {
+    "scale": {
+      "leading": { "$value": 1.5, "$type": "number" },
+      "tracking": { "$value": -0.5, "$type": "number" }
+    },
+    "heading": {
+      "$value": {
+        "fontFamily": "Inter",
+        "fontWeight": "Bold",
+        "fontSize": "24px",
+        "lineHeight": "{scale.leading}",
+        "letterSpacing": "{scale.tracking}"
+      },
+      "$type": "typography"
+    }
+  }
+}
