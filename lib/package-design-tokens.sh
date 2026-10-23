@@ -63,8 +63,8 @@ add_design_tokens_config() {
  * @fileoverview
  * Registers the `tokens-studio` preprocessor + transform group on Style
  * Dictionary (with our `value/unitless-px` and without `size/rem`), the
- * `line-height-relative` preprocessor, which every Style Dictionary config
- * must list after `tokens-studio`, the
+ * `line-height-relative` and `comment-safe-descriptions` preprocessors, which
+ * every Style Dictionary config must list after `tokens-studio`, the
  * `value/line-height-auto` and `value/css-serializable` transforms for CSS
  * platforms, and our custom Tailwind v4 `@theme` CSS format.
  *
@@ -162,9 +162,10 @@ function registerTransforms() {
 		transform: (token) => `${String(token.$value ?? token.value).trim()}px`,
 	})
 
-	// Rebuild the group: run `value/unitless-px` after `ts/resolveMath` and
-	// before `ts/size/lineheight` and `ts/size/css/letterspacing`, and drop
-	// Style Dictionary's `size/rem`, which turns `8px 16px` into `8 16pxpx`.
+	// Rebuild the group: run `value/unitless-px` right before
+	// `ts/size/lineheight` (in sd-transforms 2 that is after `ts/resolveMath`
+	// and before `ts/size/css/letterspacing`), and drop Style Dictionary's
+	// `size/rem`, which turns `8px 16px` into `8 16pxpx`.
 	const tokensStudioGroup = StyleDictionary.hooks.transformGroups['tokens-studio'].filter((name) => name !== 'size/rem')
 	const lineHeightIndex = tokensStudioGroup.indexOf('ts/size/lineheight')
 	if (lineHeightIndex === -1) {
@@ -172,6 +173,23 @@ function registerTransforms() {
 	}
 	tokensStudioGroup.splice(lineHeightIndex, 0, 'value/unitless-px')
 	StyleDictionary.registerTransformGroup({ name: 'tokens-studio', transforms: tokensStudioGroup })
+
+	// `css/variables` writes descriptions as `/* ... */` comments: a `*/` in a
+	// description would end the comment and drop the next declaration.
+	StyleDictionary.registerPreprocessor({
+		name: 'comment-safe-descriptions',
+		preprocessor: (dictionary) => {
+			const walk = (node) => {
+				if (!node || typeof node !== 'object') return
+				for (const key of ['$description', 'description']) {
+					if (typeof node[key] === 'string') node[key] = node[key].replaceAll('*/', '* /')
+				}
+				for (const child of Object.values(node)) walk(child)
+			}
+			walk(dictionary)
+			return dictionary
+		},
+	})
 
 	// Tokens Studio exports Figma "Auto" line height as `AUTO`, which is invalid CSS.
 	StyleDictionary.registerTransform({
@@ -194,6 +212,7 @@ function registerTransforms() {
 		filter: (token) => typeof (token.$value ?? token.value) === 'object',
 		transform: (token) => {
 			const value = token.$value ?? token.value
+			if (value === null) throw new Error(`Token "${token.path.join('.')}" has no value.`)
 			if (Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object')) return value.join(', ')
 			throw new Error(`Token "${token.path.join('.')}" is still an object after expansion and has no CSS form. Only typography, composition, shadow and border composites and arrays of plain values are supported.`)
 		},
@@ -487,6 +506,9 @@ class ConfigManager {
 		if (isInside(tempDir, buildPathPrefix)) {
 			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
 		}
+		if (isInside(buildPathPrefix, tempDir)) {
+			throw new Error('buildPathPrefix must not be inside tempDir: the build stages and cleans up there.')
+		}
 		const protectedPaths = [
 			PACKAGE_ROOT,
 			this.config.sourcePathPrefix,
@@ -521,6 +543,19 @@ class ConfigManager {
 		if (brands.length === 0 || platforms.length === 0) {
 			throw new Error('token-config.js needs at least one brand and one platform.')
 		}
+		// Brands after the first build to `<buildPathPrefix>/<brand>/`.
+		const badBrands = brands.filter((brand) => typeof brand !== 'string' || ['', '.', '..'].includes(brand) || /[\\/]/.test(brand))
+		if (badBrands.length > 0) {
+			throw new Error(`Brand names must be plain folder names, without "/" or "\\": ${badBrands.map(String).join(', ')}`)
+		}
+		const brandByFolder = new Map()
+		for (const brand of brands) {
+			const folder = brand.toLowerCase()
+			if (brandByFolder.has(folder)) {
+				throw new Error(`Brands "${brandByFolder.get(folder)}" and "${brand}" differ only in case: on macOS and Windows they write to one folder.`)
+			}
+			brandByFolder.set(folder, brand)
+		}
 		const strayBrandSets = Object.keys(brandSets).filter((brand) => !brands.includes(brand))
 		this.validatePaths()
 		if (strayBrandSets.length > 0) {
@@ -547,7 +582,7 @@ EOF
  * own runs; this lock makes any other overlap fail with a message.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { constants } from 'node:os'
 import path from 'node:path'
 
@@ -564,41 +599,86 @@ const isRunning = (pid) => {
 	}
 }
 
+/** @param {string} pidFile @returns {number} The pid in the file, or 0. */
+const readPid = (pidFile) => {
+	try {
+		return Number.parseInt(readFileSync(pidFile, 'utf8'), 10) || 0
+	} catch {
+		return 0
+	}
+}
+
+/** @param {string} dir @returns {boolean} Whether this call created `dir`. */
+const tryCreate = (dir) => {
+	try {
+		mkdirSync(dir)
+		return true
+	} catch (error) {
+		if (error.code === 'EEXIST') return false
+		throw error
+	}
+}
+
+/** @param {string} dir @returns {number} Milliseconds since `dir` changed, or 0 if it is gone. */
+const ageOf = (dir) => {
+	try {
+		return Date.now() - statSync(dir).mtimeMs
+	} catch (error) {
+		if (error.code === 'ENOENT') return 0
+		throw error
+	}
+}
+
+/** @param {string} lockDir @param {number} pid */
+const busyError = (lockDir, pid) =>
+	new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
+
+/**
+ * Replace a stale lock. Runs under `<lockDir>.recover`, so two processes
+ * never recover the same lock at once, and rechecks the lock under that
+ * guard because another process may have taken it in between.
+ * @param {string} lockDir
+ * @returns {void}
+ */
+function takeOverStaleLock(lockDir) {
+	const guardDir = `${lockDir}.recover`
+	const pidFile = path.join(lockDir, 'pid')
+	if (!tryCreate(guardDir)) {
+		if (ageOf(guardDir) < STARTUP_GRACE_MS) throw busyError(lockDir, readPid(pidFile))
+		rmSync(guardDir, { recursive: true, force: true })
+		if (!tryCreate(guardDir)) throw busyError(lockDir, readPid(pidFile))
+	}
+	try {
+		if (tryCreate(lockDir)) return
+		const pid = readPid(pidFile)
+		const isStarting = pid === 0 && ageOf(lockDir) < STARTUP_GRACE_MS
+		if (isStarting || (pid > 0 && pid !== process.pid && isRunning(pid))) throw busyError(lockDir, pid)
+		rmSync(lockDir, { recursive: true, force: true })
+		// A process that never needed the guard may have created the lock since.
+		if (!tryCreate(lockDir)) throw busyError(lockDir, readPid(pidFile))
+	} finally {
+		rmSync(guardDir, { recursive: true, force: true })
+	}
+}
+
 /**
  * Hold `<tempDir>/.build-lock` until the process exits. A lock is taken over
  * when its process is gone, when it carries this process's own pid (a reused
  * pid, e.g. in a container), or when it has no pid and is older than
- * `STARTUP_GRACE_MS`.
+ * `STARTUP_GRACE_MS`. On exit, only a lock that still holds this process's
+ * pid is removed.
  * @param {string} tempDir
  * @returns {void}
  */
 function acquireBuildLock(tempDir) {
 	const lockDir = path.join(tempDir, '.build-lock')
+	const pidFile = path.join(lockDir, 'pid')
 	mkdirSync(tempDir, { recursive: true })
-	try {
-		mkdirSync(lockDir)
-	} catch (error) {
-		if (error.code !== 'EEXIST') throw error
-		let pid = 0
-		try {
-			pid = Number.parseInt(readFileSync(path.join(lockDir, 'pid'), 'utf8'), 10)
-		} catch {}
-		let lockAge = 0
-		try {
-			lockAge = Date.now() - statSync(lockDir).mtimeMs
-		} catch (statError) {
-			// The holder released the lock in between: try once more.
-			if (statError.code !== 'ENOENT') throw statError
-		}
-		const isStarting = !(pid > 0) && lockAge < STARTUP_GRACE_MS && existsSync(lockDir)
-		if (isStarting || (pid > 0 && pid !== process.pid && isRunning(pid))) {
-			throw new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
-		}
-		rmSync(lockDir, { recursive: true, force: true })
-		mkdirSync(lockDir)
-	}
-	writeFileSync(path.join(lockDir, 'pid'), String(process.pid))
-	process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }))
+	if (!tryCreate(lockDir)) takeOverStaleLock(lockDir)
+	writeFileSync(pidFile, String(process.pid))
+	process.on('exit', () => {
+		if (readPid(pidFile) === process.pid) rmSync(lockDir, { recursive: true, force: true })
+	})
 	// Node skips `exit` handlers on an unhandled signal (e.g. Ctrl+C).
 	for (const signal of ['SIGINT', 'SIGTERM']) {
 		process.once(signal, () => process.exit(128 + constants.signals[signal]))
@@ -674,7 +754,7 @@ function resolveSourceFiles(brand, options) {
 
 	const missing = subset.filter((name) => !available.includes(`${name}.json`))
 	if (missing.length > 0) {
-		throw new Error(`brandSets[${brand}] lists unknown set(s): ${missing.join(', ')}. Available: ${available.map((file) => path.basename(file, '.json')).join(', ')}`)
+		throw new Error(`brandSets[${brand}] lists unknown or empty set(s): ${missing.join(', ')}. The splitter skips empty sets, so remove them from brandSets. Available: ${available.map((file) => path.basename(file, '.json')).join(', ')}`)
 	}
 	return subset.map((name) => path.join(options.tempDir, `${name}.json`))
 }
@@ -704,7 +784,7 @@ async function buildBrands(brands, options) {
 				// Style Dictionary reads `source` entries as globs: escape set names
 				// and paths such as `[Brand] A`.
 				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
-				preprocessors: ['tokens-studio', 'line-height-relative'],
+				preprocessors: ['tokens-studio', 'line-height-relative', 'comment-safe-descriptions'],
 				// One variable per property: the CSS `font` shorthand cannot hold
 				// `letterSpacing` and friends, and composition has no CSS form.
 				expand: { include: ['typography', 'composition'], typesMap: TYPES_MAP },
@@ -951,9 +1031,10 @@ try {
 const { tempDir, buildPathPrefix } = configManager.config
 /**
  * @param {string} file - Path relative to the package or absolute.
- * @param {string} dir
+ * @param {string} dir - Path relative to the package or absolute.
  */
 const isUnder = (file, dir) => {
+	dir = path.resolve(PACKAGE_ROOT, dir)
 	const relative = path.relative(dir, path.resolve(PACKAGE_ROOT, file))
 	return !relative.startsWith('..') && !path.isAbsolute(relative)
 }
@@ -962,13 +1043,15 @@ const matches = [...configManager.getInputFilePaths(), 'token-config.js', 'lib',
 onchange({
 	cwd: PACKAGE_ROOT,
 	matches,
-	// The build writes tempDir and buildPathPrefix; editors write swap and temp
-	// files next to the sources. Neither should start a build.
+	// The build writes tempDir and buildPathPrefix. In lib/ and scripts/ only
+	// .mjs files and folders count: dotfiles (.DS_Store) and other extensions
+	// (.swp, .md) do not start a build.
 	exclude: [
 		(file) =>
 			isUnder(file, tempDir) ||
 			isUnder(file, buildPathPrefix) ||
-			((isUnder(file, 'lib') || isUnder(file, 'scripts')) && path.extname(file) !== '' && path.extname(file) !== '.mjs'),
+			((isUnder(file, 'lib') || isUnder(file, 'scripts')) &&
+				(path.basename(file).startsWith('.') || (path.extname(file) !== '' && path.extname(file) !== '.mjs'))),
 	],
 	initial: true,
 	command: ['pnpm', 'build'],
@@ -1456,7 +1539,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix, also inside one file, fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography or composition token, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix, also inside one file, fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography or composition token, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it. In a composition, give `boxShadow` as a reference to a shadow token: an inline shadow object loses its `x` and `y`.
 
 ### Adding a new brand
 
