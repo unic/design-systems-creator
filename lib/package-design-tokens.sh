@@ -63,6 +63,8 @@ add_design_tokens_config() {
  * @fileoverview
  * Registers the `tokens-studio` preprocessor + transform group on Style
  * Dictionary (with our `value/unitless-px` and without `size/rem`), the
+ * `line-height-relative` preprocessor, which every Style Dictionary config
+ * must list after `tokens-studio`, the
  * `value/line-height-auto` and `value/css-serializable` transforms for CSS
  * platforms, and our custom Tailwind v4 `@theme` CSS format.
  *
@@ -99,22 +101,27 @@ function registerTransforms() {
 					if (!key.startsWith('$')) collect(child, [...path, key])
 				}
 			}
-			const isRelativeAtSource = (value) => {
+			const resolveAlias = (value) => {
 				const seen = new Set()
 				while (typeof value === 'string' && /^\{[^{}]+\}$/.test(value.trim()) && !seen.has(value)) {
 					seen.add(value)
 					const target = tokensByPath.get(value.trim().slice(1, -1))
-					if (!target) return false
+					if (!target) return undefined
 					value = valueOf(target)
 				}
-				return typeof value === 'number' || (typeof value === 'string' && value.trim().endsWith('%'))
+				return value
+			}
+			const isRelativeAtSource = (value) => {
+				const source = resolveAlias(value)
+				return typeof source === 'number' || (typeof source === 'string' && source.trim().endsWith('%'))
 			}
 
 			relativeLineHeightPaths.clear()
 			collect(dictionary, [])
 			for (const [path, token] of tokensByPath) {
 				const type = token.$type ?? token.type
-				const value = valueOf(token)
+				// A typography or composition token can alias a whole other one.
+				const value = resolveAlias(valueOf(token))
 				if (['lineHeight', 'lineHeights'].includes(type) && isRelativeAtSource(value)) relativeLineHeightPaths.add(path)
 				if (!NESTED_LINE_HEIGHTS[type] || !value || typeof value !== 'object') continue
 				for (const property of NESTED_LINE_HEIGHTS[type]) {
@@ -891,7 +898,8 @@ EOF
  * set inclusion via `brandSets`. To add a platform: implement a factory in
  * `lib/platformConfigs.mjs`, register it in `PLATFORM_FACTORIES` and add its
  * key to `platforms`. Path keys (`sourcePathPrefix`, `buildPathPrefix`,
- * `tempDir`) default to `tokens/`, `dist/` and `temp/`; `tempDir` must not be
+ * `tempDir`) default to `tokens/`, `dist/` and `temp/`; use absolute paths,
+ * and note that `pnpm clean` only removes the defaults. `tempDir` must not be
  * inside `buildPathPrefix`. The build deletes and recreates `buildPathPrefix`
  * on every run, so point it only at a folder the build owns. The package
  * `exports` assume `dist/`; update them if you move it.
@@ -1140,7 +1148,7 @@ design-tokens/
 │   ├── buildBrands.mjs               # Brand × platform orchestrator
 │   ├── configManager.mjs             # Loads token-config.js over defaults
 │   ├── platformConfigs.mjs           # Per-platform Style Dictionary factories
-│   └── registerTransforms.mjs        # Tokens Studio preprocessor + custom formats
+│   └── registerTransforms.mjs        # Preprocessors, value transforms, Tailwind format
 ├── scripts/                          # CLI entry points
 │   ├── build-style-dictionary.mjs    # Main build (split + per-brand SD run)
 │   └── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
@@ -1221,12 +1229,12 @@ pnpm clean
 | Flag            | Effect                                                            |
 | --------------- | ----------------------------------------------------------------- |
 | `--source=PATH` | Override `inputFiles[0]` with this path, absolute or relative to where you run `pnpm`. Needs the `=`. |
-| `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). |
+| `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). Not with `--source`. |
 | `--verbose`     | Verbose Style Dictionary logging, e.g. to name broken references. |
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly or at the end of an alias chain, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, as in the sample). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography token that aliases another, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, as in the sample). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
 
 ### Adding a new brand
 
