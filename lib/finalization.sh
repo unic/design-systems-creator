@@ -122,8 +122,9 @@ monorepo/
 ├── packages/
 │   ├── design-tokens/        # Design tokens (Style Dictionary + DTCG)
 │   │   ├── tokens/           # Token source files (from Tokens Studio)
-│   │   ├── sd.config.js      # Style Dictionary configuration
-│   │   └── package.json      # devDeps: style-dictionary, typescript (catalog:)
+│   │   ├── lib/, scripts/    # Split + per-brand Style Dictionary build
+│   │   ├── token-config.js   # Build config (brands, platforms, sets)
+│   │   └── package.json      # devDeps: style-dictionary, @tokens-studio/sd-transforms (catalog:)
 │   │
 │   ├── tailwind-config/      # Shared Tailwind + PostCSS configuration
 │   │   ├── tailwind.config.js

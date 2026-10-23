@@ -77,6 +77,19 @@ import { register as registerTokensStudio } from '@tokens-studio/sd-transforms'
 function registerTransforms() {
 	registerTokensStudio(StyleDictionary)
 
+	// CSS platforms run this after the `tokens-studio` group, which has already
+	// turned typography, shadow and border composites into strings.
+	StyleDictionary.registerTransform({
+		name: 'value/css-serializable',
+		type: 'value',
+		filter: (token) => typeof (token.$value ?? token.value) === 'object',
+		transform: (token) => {
+			const value = token.$value ?? token.value
+			if (Array.isArray(value)) return value.join(', ')
+			throw new Error(`Token "${token.path.join('.')}" has no CSS-serializable value. Composite types such as composition are not supported.`)
+		},
+	})
+
 	StyleDictionary.registerFormat({
 		name: 'tailwind/theme-css',
 		/** @param {{ dictionary: any, file: any }} args */
@@ -93,11 +106,7 @@ function registerTransforms() {
 
 			for (const token of dictionary.allTokens) {
 				const cssVarName = `--${token.name}`
-				const rawValue = token.$value ?? token.value
-				const value = Array.isArray(rawValue) ? rawValue.join(', ') : rawValue
-				if (value === undefined || typeof value === 'object') {
-					throw new Error(`Token "${token.path.join('.')}" has no CSS-serializable value. Composite types such as composition are not supported.`)
-				}
+				const value = token.$value ?? token.value
 				lines.push(`\t${cssVarName}: ${value};`)
 			}
 
@@ -135,7 +144,7 @@ export function createTailwindCssPlatform(buildPath) {
 	return {
 		buildPath: buildPath.endsWith('/') ? buildPath : `${buildPath}/`,
 		transformGroup: 'tokens-studio',
-		transforms: ['name/kebab'],
+		transforms: ['name/kebab', 'value/css-serializable'],
 		files: [
 			{
 				destination: 'tailwind-theme.css',
@@ -156,7 +165,7 @@ export function createCssVarsPlatform(buildPath) {
 	return {
 		buildPath: buildPath.endsWith('/') ? buildPath : `${buildPath}/`,
 		transformGroup: 'tokens-studio',
-		transforms: ['name/kebab'],
+		transforms: ['name/kebab', 'value/css-serializable'],
 		files: [
 			{
 				destination: 'tokens.css',
@@ -333,6 +342,10 @@ class ConfigManager {
 			throw new Error('token-config.js needs at least one brand and one platform.')
 		}
 		const strayBrandSets = Object.keys(brandSets).filter((brand) => !brands.includes(brand))
+		const relativeTempDir = path.relative(this.config.buildPathPrefix, this.config.tempDir)
+		if (!relativeTempDir.startsWith('..') && !path.isAbsolute(relativeTempDir)) {
+			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
+		}
 		if (strayBrandSets.length > 0) {
 			throw new Error(`brandSets key(s) not in brands: ${strayBrandSets.join(', ')}. Brands: ${brands.join(', ')}`)
 		}
@@ -619,12 +632,15 @@ registerTransforms()
 function parseArgs(argv) {
 	const out = { skipSplit: false, verbose: false }
 	for (const arg of argv) {
+		// pnpm passes the `--` separator through (`pnpm build -- --verbose`).
+		if (arg === '--') continue
 		if (arg === '--skip-split') out.skipSplit = true
 		else if (arg === '--verbose') out.verbose = true
 		else if (arg.startsWith('--source=')) out.source = arg.slice('--source='.length)
 		else throw new Error(`Unknown argument "${arg}". Use --source=PATH, --skip-split or --verbose.`)
 	}
-	if (out.source && out.skipSplit) {
+	if (out.source === '') throw new Error('--source= needs a path.')
+	if (out.source !== undefined && out.skipSplit) {
 		throw new Error('--source has no effect with --skip-split. Drop one of them.')
 	}
 	return out
@@ -638,9 +654,11 @@ const exec = async (argv = []) => {
 	try {
 		cli = parseArgs(argv)
 		await configManager.loadFromFile()
-		if (cli.source) {
+		if (cli.source !== undefined) {
+			// pnpm runs scripts in the package dir; INIT_CWD is where pnpm was called.
+			const callerDir = process.env.INIT_CWD ?? process.cwd()
 			const [, ...supplementaryFiles] = configManager.config.inputFiles
-			configManager.mergeConfig({ inputFiles: [path.resolve(process.cwd(), cli.source), ...supplementaryFiles] })
+			configManager.mergeConfig({ inputFiles: [path.resolve(callerDir, cli.source), ...supplementaryFiles] })
 		}
 		splitConfig = configManager.getSplitConfig()
 		brandPlatformConfig = configManager.getBrandPlatformConfig()
@@ -674,8 +692,15 @@ const exec = async (argv = []) => {
 		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}`)
 		process.exit(1)
 	}
-	await fs.rm(buildPathPrefix, { recursive: true, force: true })
-	await fs.rename(stagingPath, buildPathPrefix)
+	try {
+		// `cp` rather than `rename`: works across devices.
+		await fs.rm(buildPathPrefix, { recursive: true, force: true })
+		await fs.cp(stagingPath, buildPathPrefix, { recursive: true })
+		await fs.rm(stagingPath, { recursive: true, force: true })
+	} catch (error) {
+		console.error(`\n[design-tokens] copying the build into ${buildPathPrefix} failed: ${error.message}`)
+		process.exit(1)
+	}
 
 	console.log('\n[design-tokens] build complete.')
 }
@@ -801,43 +826,43 @@ add_design_tokens_sample() {
       }
     },
     "spacing": {
-      "0":   { "$value": "0",         "type": "dimension" },
-      "px":  { "$value": "1px",       "type": "dimension" },
-      "0-5": { "$value": "0.125rem",  "type": "dimension" },
-      "1":   { "$value": "0.25rem",   "type": "dimension" },
-      "1-5": { "$value": "0.375rem",  "type": "dimension" },
-      "2":   { "$value": "0.5rem",    "type": "dimension" },
-      "2-5": { "$value": "0.625rem",  "type": "dimension" },
-      "3":   { "$value": "0.75rem",   "type": "dimension" },
-      "3-5": { "$value": "0.875rem",  "type": "dimension" },
-      "4":   { "$value": "1rem",      "type": "dimension" },
-      "5":   { "$value": "1.25rem",   "type": "dimension" },
-      "6":   { "$value": "1.5rem",    "type": "dimension" },
-      "7":   { "$value": "1.75rem",   "type": "dimension" },
-      "8":   { "$value": "2rem",      "type": "dimension" },
-      "9":   { "$value": "2.25rem",   "type": "dimension" },
-      "10":  { "$value": "2.5rem",    "type": "dimension" },
-      "12":  { "$value": "3rem",      "type": "dimension" },
-      "14":  { "$value": "3.5rem",    "type": "dimension" },
-      "16":  { "$value": "4rem",      "type": "dimension" },
-      "20":  { "$value": "5rem",      "type": "dimension" },
-      "24":  { "$value": "6rem",      "type": "dimension" },
-      "32":  { "$value": "8rem",      "type": "dimension" }
+      "0":   { "$value": "0",         "$type": "dimension" },
+      "px":  { "$value": "1px",       "$type": "dimension" },
+      "0-5": { "$value": "0.125rem",  "$type": "dimension" },
+      "1":   { "$value": "0.25rem",   "$type": "dimension" },
+      "1-5": { "$value": "0.375rem",  "$type": "dimension" },
+      "2":   { "$value": "0.5rem",    "$type": "dimension" },
+      "2-5": { "$value": "0.625rem",  "$type": "dimension" },
+      "3":   { "$value": "0.75rem",   "$type": "dimension" },
+      "3-5": { "$value": "0.875rem",  "$type": "dimension" },
+      "4":   { "$value": "1rem",      "$type": "dimension" },
+      "5":   { "$value": "1.25rem",   "$type": "dimension" },
+      "6":   { "$value": "1.5rem",    "$type": "dimension" },
+      "7":   { "$value": "1.75rem",   "$type": "dimension" },
+      "8":   { "$value": "2rem",      "$type": "dimension" },
+      "9":   { "$value": "2.25rem",   "$type": "dimension" },
+      "10":  { "$value": "2.5rem",    "$type": "dimension" },
+      "12":  { "$value": "3rem",      "$type": "dimension" },
+      "14":  { "$value": "3.5rem",    "$type": "dimension" },
+      "16":  { "$value": "4rem",      "$type": "dimension" },
+      "20":  { "$value": "5rem",      "$type": "dimension" },
+      "24":  { "$value": "6rem",      "$type": "dimension" },
+      "32":  { "$value": "8rem",      "$type": "dimension" }
     },
     "typography": {
       "font-family": {
-        "sans": { "$value": ["Inter", "system-ui", "sans-serif"],     "type": "fontFamily" },
+        "sans": { "$value": ["Inter", "system-ui", "sans-serif"],     "$type": "fontFamily" },
         "mono": { "$value": ["JetBrains Mono", "Menlo", "monospace"], "$type": "fontFamily" }
       },
       "font-size": {
-        "xs":   { "$value": "0.75rem",  "type": "dimension" },
+        "xs":   { "$value": "0.75rem",  "$type": "dimension" },
         "sm":   { "$value": "0.875rem", "$type": "dimension" },
-        "base": { "$value": "1rem",     "type": "dimension" },
+        "base": { "$value": "1rem",     "$type": "dimension" },
         "lg":   { "$value": "1.125rem", "$type": "dimension" },
-        "xl":   { "$value": "1.25rem",  "type": "dimension" },
-        "2xl":  { "$value": "1.5rem",   "type": "dimension" },
+        "xl":   { "$value": "1.25rem",  "$type": "dimension" },
+        "2xl":  { "$value": "1.5rem",   "$type": "dimension" },
         "3xl":  { "$value": "1.875rem", "$type": "dimension" },
-        "4xl":  { "$value": "2.25rem",  "type": "dimension" }
+        "4xl":  { "$value": "2.25rem",  "$type": "dimension" }
       },
       "font-weight": {
         "normal":   { "$value": "400", "$type": "fontWeight" },
@@ -846,17 +871,17 @@ add_design_tokens_sample() {
         "bold":     { "$value": "700", "$type": "fontWeight" }
       },
       "line-height": {
-        "none":    { "$value": "1",     "type": "number" },
-        "tight":   { "$value": "1.25",  "type": "number" },
+        "none":    { "$value": "1",     "$type": "number" },
+        "tight":   { "$value": "1.25",  "$type": "number" },
         "snug":    { "$value": "1.375", "$type": "number" },
-        "normal":  { "$value": "1.5",   "type": "number" },
+        "normal":  { "$value": "1.5",   "$type": "number" },
         "relaxed": { "$value": "1.625", "$type": "number" },
-        "loose":   { "$value": "2",     "type": "number" }
+        "loose":   { "$value": "2",     "$type": "number" }
       }
     },
     "semantic": {
       "background": {
-        "default": { "$value": "{color.neutral.50}",  "type": "color" },
+        "default": { "$value": "{color.neutral.50}",  "$type": "color" },
         "muted":   { "$value": "{color.neutral.100}", "$type": "color" },
         "subtle":  { "$value": "{color.neutral.200}", "$type": "color" },
         "inverse": { "$value": "{color.neutral.900}", "$type": "color" }
@@ -865,7 +890,7 @@ add_design_tokens_sample() {
         "default": { "$value": "{color.neutral.900}", "$type": "color" },
         "muted":   { "$value": "{color.neutral.600}", "$type": "color" },
         "subtle":  { "$value": "{color.neutral.400}", "$type": "color" },
-        "inverse": { "$value": "{color.neutral.50}",  "type": "color" }
+        "inverse": { "$value": "{color.neutral.50}",  "$type": "color" }
       },
       "border": {
         "default": { "$value": "{color.neutral.200}", "$type": "color" },
@@ -1017,13 +1042,13 @@ pnpm clean
 
 | Flag            | Effect                                                            |
 | --------------- | ----------------------------------------------------------------- |
-| `--source=PATH` | Override `inputFiles[0]` with this absolute or cwd-relative path. Needs the `=`. |
+| `--source=PATH` | Override `inputFiles[0]` with this path, absolute or relative to where you run `pnpm`. Needs the `=`. |
 | `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). |
 | `--verbose`     | Verbose Style Dictionary logging, e.g. to name broken references. |
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and add the filename to `inputFiles` in `token-config.js`.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename, or delete the sample. Use one format across all `inputFiles`: references from a legacy file do not resolve into a DTCG file.
 
 ### Adding a new brand
 
