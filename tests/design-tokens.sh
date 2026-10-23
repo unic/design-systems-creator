@@ -6,8 +6,9 @@
 # Generates the design tokens build pipeline and sample into a temp folder,
 # builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
 # CSS output (including every variable the Storybook stories use), builds two
-# brands, and checks that colliding themes, mixed formats, values without a
-# CSS form, a build path over the build engine and an overlapping build fail,
+# brands, and checks that colliding themes, mixed formats, sets or brands that
+# differ only in case, values without a CSS form, unsafe build paths or brand
+# names and an overlapping build fail,
 # and that a stale lock is taken over and released. Pins style-dictionary@5
 # and @tokens-studio/sd-transforms@2; generated repos resolve the latest
 # versions through the catalog. Needs network for `pnpm add`.
@@ -31,7 +32,8 @@ FAILURES=0
 
 expect_css() {
 	local file="$1" declaration="$2"
-	if grep -qF -- "$declaration" "$PACKAGE_DIR/dist/$file"; then
+	# Anchor at the start of the declaration, so --a-b: cannot match --x-a-b:.
+	if grep -qF -- "$(printf '\t%s' "$declaration")" "$PACKAGE_DIR/dist/$file" || grep -qF -- "  $declaration" "$PACKAGE_DIR/dist/$file"; then
 		echo "ok    $file: $declaration"
 	else
 		echo "FAIL  $file: expected \"$declaration\""
@@ -119,6 +121,7 @@ expect_css tailwind-theme.css "--subheading-line-height: 1.5;"
 expect_css tailwind-theme.css "--panel-typography-line-height: 1.5;"
 expect_css tailwind-theme.css "--value: 1.4;"
 expect_css tokens.css "--spacing-value: 4px;"
+expect_css tokens.css "--note: #123456; /** Use for borders * / and dividers */"
 
 sed -i.bak "s|brands: \['brandName'\],|brands: ['a', 'b'],|; s|brandSets: {},|brandSets: { a: ['Brand_A'], b: ['Brand_B'] },|" "$PACKAGE_DIR/token-config.js"
 build_with_inputs "'brands.json'"
@@ -145,6 +148,16 @@ set_inputs "'primitive-design-tokens.json'"
 sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: 'lib',|" "$PACKAGE_DIR/token-config.js"
 expect_build_failure "build path over lib/" "buildPathPrefix must not be or hold the package folder"
 sed -i.bak "s|brandSets: {}, buildPathPrefix: 'lib',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
+
+sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: 'temp/dist-staging',|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "build path inside tempDir" "buildPathPrefix must not be inside tempDir"
+sed -i.bak "s|brandSets: {}, buildPathPrefix: 'temp/dist-staging',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
+
+sed -i.bak "s|brands: \['brandName'\],|brands: ['a', '../../tokens'],|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "brand name that is a path" "Brand names must be plain folder names"
+sed -i.bak "s|brands: \['a', '../../tokens'\],|brands: ['a', 'Acme', 'acme'],|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "brands that differ only in case" "differ only in case"
+sed -i.bak "s|brands: \['a', 'Acme', 'acme'\],|brands: ['brandName'],|" "$PACKAGE_DIR/token-config.js"
 
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
 echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"

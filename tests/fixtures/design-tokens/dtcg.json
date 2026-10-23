@@ -51,6 +51,15 @@
         "$value": "4px",
         "$type": "spacing"
       }
+    },
+    "note": {
+      "$value": "#123456",
+      "$type": "color",
+      "$description": "Use for borders */ and dividers"
+    },
+    "after": {
+      "$value": "#654321",
+      "$type": "color"
     }
   }
 }
