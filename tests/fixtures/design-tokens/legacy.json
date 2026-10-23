@@ -89,6 +89,13 @@
         "lineHeights": "24"
       },
       "type": "composition"
+    },
+    "panel": {
+      "value": {
+        "paddingTop": "8",
+        "typography": "{typography.body}"
+      },
+      "type": "composition"
     }
   }
 }

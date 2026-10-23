@@ -97,6 +97,7 @@ expect_css tailwind-theme.css "--line-heights-computed: 24px;"
 expect_css tailwind-theme.css "--typography-heading-line-height: 24px;"
 expect_css tailwind-theme.css "--typography-body-line-height: 1.5;"
 expect_css tailwind-theme.css "--typography-paragraph-line-height: 1.5;"
+expect_css tailwind-theme.css "--panel-typography-line-height: 1.5;"
 
 build_with_inputs "'dtcg.json'"
 expect_css tokens.css "--heading-line-height: var(--scale-leading);"
@@ -105,7 +106,7 @@ expect_css tokens.css "--leading-direct: 1.5;"
 expect_css tailwind-theme.css "--subheading-line-height: 1.5;"
 
 set_inputs "'themes.json'"
-expect_build_failure "two themes of one brand collide" "list one theme set per brand in brandSets"
+expect_build_failure "two themes of one brand collide" "one theme set per brand) in brandSets"
 
 set_inputs "'legacy.json', 'dtcg.json'"
 expect_build_failure "mixed DTCG and legacy inputs" "Export all inputFiles in one format"
