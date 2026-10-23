@@ -5,8 +5,9 @@
 # =============================================================================
 # Generates the design tokens build pipeline and sample into a temp folder,
 # builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
-# CSS output (including every variable the Storybook stories use) and checks
-# that colliding themes and mixed formats fail. Needs network for `pnpm add`.
+# CSS output (including every variable the Storybook stories use), builds two
+# brands, and checks that colliding themes, mixed formats and an overlapping
+# build fail. Needs network for `pnpm add`.
 
 set -euo pipefail
 
@@ -54,8 +55,16 @@ set_inputs() {
 
 build_with_inputs() {
 	set_inputs "$1"
-	(cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs >/dev/null)
-	if grep -nE 'undefined|NaN|\[object Object\]|pxpx' "$PACKAGE_DIR"/dist/*.css; then
+	# A failed build keeps the previous dist/, which would satisfy the checks.
+	rm -rf "$PACKAGE_DIR/dist"
+	local output
+	if ! output="$(cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs 2>&1)"; then
+		echo "FAIL  $1: build failed"
+		echo "$output" | tail -5
+		FAILURES=$((FAILURES + 1))
+		return
+	fi
+	if grep -rnE 'undefined|NaN|\[object Object\]|pxpx' "$PACKAGE_DIR/dist"; then
 		echo "FAIL  $1: invalid value in dist/"
 		FAILURES=$((FAILURES + 1))
 	fi
@@ -105,6 +114,8 @@ expect_css tokens.css "--heading-letter-spacing: -0.5px;"
 expect_css tokens.css "--leading-direct: 1.5;"
 expect_css tailwind-theme.css "--subheading-line-height: 1.5;"
 expect_css tailwind-theme.css "--panel-typography-line-height: 1.5;"
+expect_css tailwind-theme.css "--value: 1.4;"
+expect_css tokens.css "--spacing-value: 4px;"
 
 sed -i.bak "s|brands: \['brandName'\],|brands: ['a', 'b'],|; s|brandSets: {},|brandSets: { a: ['Brand_A'], b: ['Brand_B'] },|" "$PACKAGE_DIR/token-config.js"
 build_with_inputs "'brands.json'"
@@ -117,6 +128,15 @@ expect_build_failure "two themes of one brand collide" "one theme set per brand)
 
 set_inputs "'legacy.json', 'dtcg.json'"
 expect_build_failure "mixed DTCG and legacy inputs" "Export all inputFiles in one format"
+
+set_inputs "'mixed.json'"
+expect_build_failure "mixed formats in one export" "mixes DTCG \$value/\$type and legacy value/type tokens"
+
+set_inputs "'primitive-design-tokens.json'"
+mkdir -p "$PACKAGE_DIR/temp/.build-lock"
+echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"
+expect_build_failure "overlapping build" "Another build (pid $$)"
+rm -rf "$PACKAGE_DIR/temp/.build-lock"
 
 if [[ "$FAILURES" -gt 0 ]]; then
 	log_error "$FAILURES design tokens check(s) failed"

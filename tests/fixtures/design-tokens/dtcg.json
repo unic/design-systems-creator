@@ -41,6 +41,16 @@
         "typography": "{subheading}"
       },
       "$type": "composition"
+    },
+    "value": {
+      "$value": 1.4,
+      "$type": "lineHeights"
+    },
+    "spacing": {
+      "value": {
+        "$value": "4px",
+        "$type": "spacing"
+      }
     }
   }
 }
