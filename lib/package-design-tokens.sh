@@ -87,9 +87,13 @@ function registerTransforms() {
 		name: 'value/unitless-px',
 		type: 'value',
 		transitive: true,
+		// Strings only: Tokens Studio exports bare numbers as strings, while
+		// `ts/size/lineheight` turns `150%` into the number `1.5`, which an alias
+		// to it must keep.
 		filter: (token) =>
 			['lineHeight', 'lineHeights', 'letterSpacing'].includes(token.$type ?? token.type) &&
-			/^-?(\d+\.?\d*|\.\d+)$/.test(String(token.$value ?? token.value).trim()) &&
+			typeof (token.$value ?? token.value) === 'string' &&
+			/^-?(\d+\.?\d*|\.\d+)$/.test((token.$value ?? token.value).trim()) &&
 			Number(token.$value ?? token.value) !== 0,
 		transform: (token) => `${String(token.$value ?? token.value).trim()}px`,
 	})
@@ -98,7 +102,11 @@ function registerTransforms() {
 	// transforms, and drop Style Dictionary's `size/rem`, which turns a
 	// multi-value `8px 16px` into `8 16pxpx`.
 	const tokensStudioGroup = StyleDictionary.hooks.transformGroups['tokens-studio'].filter((name) => name !== 'size/rem')
-	tokensStudioGroup.splice(tokensStudioGroup.indexOf('ts/size/lineheight'), 0, 'value/unitless-px')
+	const lineHeightIndex = tokensStudioGroup.indexOf('ts/size/lineheight')
+	if (lineHeightIndex === -1) {
+		throw new Error('@tokens-studio/sd-transforms no longer has `ts/size/lineheight`; update lib/registerTransforms.mjs.')
+	}
+	tokensStudioGroup.splice(lineHeightIndex, 0, 'value/unitless-px')
 	StyleDictionary.registerTransformGroup({ name: 'tokens-studio', transforms: tokensStudioGroup })
 
 	// Tokens Studio exports Figma "Auto" line height as `AUTO`, which is invalid CSS.
@@ -846,8 +854,9 @@ export default {
 	brands: ['brandName'],
 
 	/**
-	 * Platforms to build per brand. Keep minimal — Tailwind v4 `@theme`
-	 * is the runtime contract; `css-vars` is kept for raw-CSS consumers.
+	 * Platforms to build per brand. Tailwind v4 `@theme` is the runtime
+	 * contract. `css-vars` writes `dist/tokens.css`, which the generated
+	 * Storybook imports through `@repo/design-tokens/css`, so keep it.
 	 *
 	 * The `js` platform exists in `lib/platformConfigs.mjs` but is OFF by
 	 * default because Tokens Studio exports often contain token names that
@@ -1111,7 +1120,7 @@ Edit `token-config.js`:
 | Key            | Outputs                                              | Use case                                                       |
 | -------------- | ---------------------------------------------------- | -------------------------------------------------------------- |
 | `tailwind-css` | `dist/tailwind-theme.css`                            | Tailwind v4 `@theme` block (primary runtime contract).         |
-| `css-vars`     | `dist/tokens.css`                                    | Plain `:root { --token: value }` for non-Tailwind consumers.   |
+| `css-vars`     | `dist/tokens.css`                                    | Plain `:root { --token: value }`. Storybook imports it via `@repo/design-tokens/css`. |
 | `js`           | `dist/index.js`, `dist/index.cjs`, `dist/index.d.ts` | Named JS exports with `.d.ts`. Off by default — enable when token names are valid JS identifiers, and add a `"."` entry to `exports`. |
 
 ## Usage
@@ -1166,7 +1175,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`1.5` → `1.5px`); use `150%` for a relative line height.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing written as a bare number string is in pixels (`"1.5"` → `1.5px`), also when a typography token references it; use `150%` for a relative line height. A JSON number (`"$value": 24`, as Figma Variables export) stays unitless, so a line height that references one acts as a multiplier.
 
 ### Adding a new brand
 
