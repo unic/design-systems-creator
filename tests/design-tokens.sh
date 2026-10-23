@@ -8,9 +8,9 @@
 # CSS output (including every variable the Storybook stories use), builds two
 # brands, and checks that colliding themes, mixed formats, values without a
 # CSS form, a build path over the build engine and an overlapping build fail,
-# and that a stale lock is taken over and released. Pins style-dictionary@5 and @tokens-studio/sd-transforms@2;
-# generated repos resolve the latest versions through the catalog. Needs
-# network for `pnpm add`.
+# and that a stale lock is taken over and released. Pins style-dictionary@5
+# and @tokens-studio/sd-transforms@2; generated repos resolve the latest
+# versions through the catalog. Needs network for `pnpm add`.
 
 set -euo pipefail
 

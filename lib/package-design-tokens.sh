@@ -152,7 +152,7 @@ function registerTransforms() {
 			const value = token.$value ?? token.value
 			if (!['lineHeight', 'lineHeights', 'letterSpacing'].includes(type)) return false
 			if (typeof value === 'number') {
-				// A number here comes from math, a JSON number or a `150%` line
+				// A number here comes from math, a JSON number or an alias to a `150%` line
 				// height. Only line heights marked relative at their source keep it.
 				const isRelative = relativeLineHeightPaths.has(token.path.join('.'))
 				return value !== 0 && !(type !== 'letterSpacing' && isRelative)
@@ -184,7 +184,8 @@ function registerTransforms() {
 
 	// CSS platforms run this after the `tokens-studio` group. Typography and
 	// composition are expanded before; the group turns shadow and border
-	// composites into strings. Anything still an object fails here.
+	// composites into strings. Arrays of plain values (e.g. font families) are
+	// joined with `, `; anything else that is still an object fails here.
 	StyleDictionary.registerTransform({
 		name: 'value/css-serializable',
 		type: 'value',
@@ -194,7 +195,7 @@ function registerTransforms() {
 		transform: (token) => {
 			const value = token.$value ?? token.value
 			if (Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object')) return value.join(', ')
-			throw new Error(`Token "${token.path.join('.')}" is still an object after expansion and has no CSS form. Only typography, composition, shadow and border composites are supported.`)
+			throw new Error(`Token "${token.path.join('.')}" is still an object after expansion and has no CSS form. Only typography, composition, shadow and border composites and arrays of plain values are supported.`)
 		},
 	})
 
@@ -547,6 +548,7 @@ EOF
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { constants } from 'node:os'
 import path from 'node:path'
 
 /** A lock without a pid younger than this may still be starting up. */
@@ -597,6 +599,10 @@ function acquireBuildLock(tempDir) {
 	}
 	writeFileSync(path.join(lockDir, 'pid'), String(process.pid))
 	process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }))
+	// Node skips `exit` handlers on an unhandled signal (e.g. Ctrl+C).
+	for (const signal of ['SIGINT', 'SIGTERM']) {
+		process.once(signal, () => process.exit(128 + constants.signals[signal]))
+	}
 }
 
 export default acquireBuildLock
@@ -916,16 +922,20 @@ EOF
  * onchange queues the runs, so the last change wins. The watch list comes
  * from `token-config.js`: restart after changing `inputFiles` or
  * `sourcePathPrefix`.
+ *
+ * Uses onchange's API in this process: no shell quoting, no PATH lookup,
+ * and no child watcher left behind when this process is killed. Paths are
+ * plain files and folders, not globs, so `(` or `[` in a path is safe.
  */
 
-import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { onchange } from 'onchange'
 
 import ConfigManager from '../lib/configManager.mjs'
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const toGlob = (file) => file.split(path.sep).join('/')
 
 const configManager = new ConfigManager()
 try {
@@ -937,20 +947,23 @@ try {
 }
 
 const { tempDir, buildPathPrefix } = configManager.config
-const watched = [
-	...configManager.getInputFilePaths(),
-	path.join(PACKAGE_ROOT, 'token-config.js'),
-	path.join(PACKAGE_ROOT, 'lib/**/*.mjs'),
-	path.join(PACKAGE_ROOT, 'scripts/**/*.mjs'),
-].map(toGlob)
-// The build writes these: watching them would rebuild forever.
-const excluded = [tempDir, buildPathPrefix].flatMap((dir) => ['--exclude', toGlob(path.join(dir, '**'))])
+/**
+ * @param {string} file - Path relative to the package or absolute.
+ * @param {string} dir
+ */
+const isUnder = (file, dir) => {
+	const relative = path.relative(dir, path.resolve(PACKAGE_ROOT, file))
+	return !relative.startsWith('..') && !path.isAbsolute(relative)
+}
 
-const watcher = spawn('onchange', [...watched, ...excluded, '--initial', '--', 'pnpm', 'build'], {
-	stdio: 'inherit',
-	shell: process.platform === 'win32',
+onchange({
+	cwd: PACKAGE_ROOT,
+	matches: [...configManager.getInputFilePaths(), 'token-config.js', 'lib', 'scripts'],
+	// The build writes these: watching them would rebuild forever.
+	exclude: [(file) => isUnder(file, tempDir) || isUnder(file, buildPathPrefix)],
+	initial: true,
+	command: ['pnpm', 'build'],
 })
-watcher.on('exit', (code) => process.exit(code ?? 1))
 EOF
 
 	cat >scripts/build-style-dictionary.mjs <<'EOF'
@@ -1349,7 +1362,7 @@ design-tokens/
 ├── scripts/                          # CLI entry points
 │   ├── build-style-dictionary.mjs    # Main build (split + per-brand SD run)
 │   ├── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
-│   └── watch.mjs                     # `pnpm build:watch` (onchange, watch list from token-config.js)
+│   └── watch.mjs                     # `pnpm build:watch` (onchange API, watch list from token-config.js)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
 ├── temp/                             # Per-set intermediate files (package .gitignore)

@@ -84,8 +84,9 @@ Manages dependencies in a generated monorepo. Resolves versions against the pnpm
 ## Development
 
 ```sh
-pnpm run lint       # shellcheck + shfmt diff check
+pnpm run lint       # shellcheck + shfmt diff check on bin/, lib/ and tests/
 pnpm run format     # shfmt write
+pnpm test           # builds the design tokens pipeline against tests/fixtures/design-tokens/ (needs network)
 ```
 
 ## License
