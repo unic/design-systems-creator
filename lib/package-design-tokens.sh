@@ -17,7 +17,7 @@ create_design_tokens_package() {
 
 	jq \
 		--arg name "@repo/design-tokens" \
-		--arg description "Design tokens for the ${ORGANIZATION_NAME} Design System (Style Dictionary + DTCG)" \
+		--arg description "Design tokens for the ${ORGANIZATION_NAME} Design System (Tokens Studio + Style Dictionary)" \
 		--arg author "${DEVELOPER}" \
 		'. + {
 			name: $name,
@@ -79,6 +79,52 @@ import { register as registerTokensStudio } from '@tokens-studio/sd-transforms'
 function registerTransforms() {
 	registerTokensStudio(StyleDictionary)
 
+	// Records line heights that are relative at their source: a percentage or a
+	// JSON number, directly or at the end of an alias chain. Transforms cannot
+	// see the alias target, and after `ts/resolveMath` / `ts/size/lineheight` a
+	// relative `1.5` and a computed `24` are both plain numbers. Covers the
+	// line height inside typography and composition values, which `expand`
+	// turns into tokens at `<path>.lineHeight` / `<path>.lineHeights`.
+	const relativeLineHeightPaths = new Set()
+	const NESTED_LINE_HEIGHTS = { typography: ['lineHeight'], composition: ['lineHeight', 'lineHeights'] }
+	StyleDictionary.registerPreprocessor({
+		name: 'line-height-relative',
+		preprocessor: (dictionary) => {
+			const valueOf = (node) => ('$value' in node ? node.$value : node.value)
+			const tokensByPath = new Map()
+			const collect = (node, path) => {
+				if (!node || typeof node !== 'object') return
+				if ('$value' in node || 'value' in node) return void tokensByPath.set(path.join('.'), node)
+				for (const [key, child] of Object.entries(node)) {
+					if (!key.startsWith('$')) collect(child, [...path, key])
+				}
+			}
+			const isRelativeAtSource = (value) => {
+				const seen = new Set()
+				while (typeof value === 'string' && /^\{[^{}]+\}$/.test(value.trim()) && !seen.has(value)) {
+					seen.add(value)
+					const target = tokensByPath.get(value.trim().slice(1, -1))
+					if (!target) return false
+					value = valueOf(target)
+				}
+				return typeof value === 'number' || (typeof value === 'string' && value.trim().endsWith('%'))
+			}
+
+			relativeLineHeightPaths.clear()
+			collect(dictionary, [])
+			for (const [path, token] of tokensByPath) {
+				const type = token.$type ?? token.type
+				const value = valueOf(token)
+				if (['lineHeight', 'lineHeights'].includes(type) && isRelativeAtSource(value)) relativeLineHeightPaths.add(path)
+				if (!NESTED_LINE_HEIGHTS[type] || !value || typeof value !== 'object') continue
+				for (const property of NESTED_LINE_HEIGHTS[type]) {
+					if (property in value && isRelativeAtSource(value[property])) relativeLineHeightPaths.add(`${path}.${property}`)
+				}
+			}
+			return dictionary
+		},
+	})
+
 	// Tokens Studio applies a unitless line height or letter spacing as pixels;
 	// in CSS a bare line height is a multiplier and a bare letter spacing is
 	// invalid. Transitive, so it also sees values that come from a reference
@@ -92,20 +138,19 @@ function registerTransforms() {
 			const value = token.$value ?? token.value
 			if (!['lineHeight', 'lineHeights', 'letterSpacing'].includes(type)) return false
 			if (typeof value === 'number') {
-				// A number here comes from math, a JSON number, or a `150%` line
-				// height that `ts/size/lineheight` already made relative. A line
-				// height that is a pure alias keeps its number: it is relative.
-				const isAlias = /^\{[^{}]+\}$/.test(String(token.original.$value ?? token.original.value).trim())
-				return value !== 0 && !(type !== 'letterSpacing' && isAlias)
+				// A number here comes from math, a JSON number or a `150%` line
+				// height. Only line heights marked relative at their source keep it.
+				const isRelative = relativeLineHeightPaths.has(token.path.join('.'))
+				return value !== 0 && !(type !== 'letterSpacing' && isRelative)
 			}
 			return typeof value === 'string' && /^-?(\d+\.?\d*|\.\d+)$/.test(value.trim()) && Number(value) !== 0
 		},
 		transform: (token) => `${String(token.$value ?? token.value).trim()}px`,
 	})
 
-	// Rebuild the group: run `value/unitless-px` before the Tokens Studio size
-	// transforms, and drop Style Dictionary's `size/rem`, which turns a
-	// multi-value `8px 16px` into `8 16pxpx`.
+	// Rebuild the group: run `value/unitless-px` after `ts/resolveMath` and
+	// before `ts/size/lineheight` and `ts/size/css/letterspacing`, and drop
+	// Style Dictionary's `size/rem`, which turns `8px 16px` into `8 16pxpx`.
 	const tokensStudioGroup = StyleDictionary.hooks.transformGroups['tokens-studio'].filter((name) => name !== 'size/rem')
 	const lineHeightIndex = tokensStudioGroup.indexOf('ts/size/lineheight')
 	if (lineHeightIndex === -1) {
@@ -515,7 +560,7 @@ async function buildBrands(brands, options) {
 				// Style Dictionary reads `source` entries as globs: escape set names
 				// and paths such as `[Brand] A`.
 				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
-				preprocessors: ['tokens-studio'],
+				preprocessors: ['tokens-studio', 'line-height-relative'],
 				// One variable per property: the CSS `font` shorthand cannot hold
 				// `letterSpacing` and friends, and composition has no CSS form.
 				expand: { include: ['typography', 'composition'], typesMap: TYPES_MAP },
@@ -812,7 +857,7 @@ const exec = async (argv = []) => {
 		await buildBrands(brands, { buildPathPrefix: stagingPath, tempDir, platforms, brandSets, verbose: cli.verbose })
 	} catch (error) {
 		await fs.rm(stagingPath, { recursive: true, force: true })
-		const hint = /collision/i.test(error.message) ? '\nLoading two theme sets of one brand collides: list one theme set per brand in brandSets.' : ''
+		const hint = /Token collisions detected/.test(error.message) ? '\nLoading two theme sets of one brand collides: list one theme set per brand in brandSets.' : ''
 		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}${hint}\nRerun with --verbose for details.`)
 		process.exit(1)
 	}
@@ -1181,7 +1226,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math or from a typography token. Exception: a line height that is a pure alias (`{lineHeights.body}`) to a percentage or to a JSON-number token (`"$value": 1.5`) stays relative, as in the sample. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly or at the end of an alias chain, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, as in the sample). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
 
 ### Adding a new brand
 

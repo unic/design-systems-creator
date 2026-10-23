@@ -27,7 +27,7 @@ This is a **Bash-based monorepo generator** for creating design systems. It scaf
 
 ```sh
 pnpm lint   # shellcheck + shfmt on bin/, lib/ and tests/
-pnpm test   # generates @repo/design-tokens and checks CSS output for tests/fixtures/design-tokens/ (needs network for `pnpm add`)
+pnpm test   # builds the design tokens pipeline against tests/fixtures/design-tokens/ and checks CSS output (needs network for `pnpm add`)
 ```
 
 ## Architecture
