@@ -35,7 +35,7 @@ create_design_tokens_package() {
 			files: ["dist"],
 			scripts: {
 				"build": "node ./scripts/build-style-dictionary.mjs",
-				"build:watch": "chokidar \"tokens/**/*.json\" \"token-config.js\" \"lib/**/*.mjs\" \"scripts/**/*.mjs\" -c \"pnpm build\"",
+				"build:watch": "onchange \"tokens/**/*.json\" \"token-config.js\" \"lib/**/*.mjs\" \"scripts/**/*.mjs\" --initial -- pnpm build",
 				"split-tokens": "node ./scripts/split-design-tokens.mjs",
 				"clean": "rm -rf dist temp",
 				"typecheck": "tsc --noEmit"
@@ -43,7 +43,7 @@ create_design_tokens_package() {
 			devDependencies: {
 				"@repo/typescript-config": "workspace:*",
 				"@tokens-studio/sd-transforms": "catalog:",
-				"chokidar-cli": "catalog:",
+				"onchange": "catalog:",
 				"style-dictionary": "catalog:",
 				"typescript": "catalog:"
 			}
@@ -97,7 +97,8 @@ function registerTransforms() {
 			const tokensByPath = new Map()
 			const collect = (node, path) => {
 				if (!node || typeof node !== 'object') return
-				if ('$value' in node || 'value' in node) return void tokensByPath.set(path.join('.'), node)
+				// A legacy leaf needs a string `type`: a DTCG token can be named `value`.
+				if ('$value' in node || ('value' in node && typeof node.type === 'string')) return void tokensByPath.set(path.join('.'), node)
 				for (const [key, child] of Object.entries(node)) {
 					if (!key.startsWith('$')) collect(child, [...path, key])
 				}
@@ -193,7 +194,7 @@ function registerTransforms() {
 		transform: (token) => {
 			const value = token.$value ?? token.value
 			if (Array.isArray(value)) return value.join(', ')
-			throw new Error(`Token "${token.path.join('.')}" has no CSS-serializable value. Composite types such as composition are not supported.`)
+			throw new Error(`Token "${token.path.join('.')}" is still an object after expansion and has no CSS form. Only typography, composition, shadow and border composites are supported.`)
 		},
 	})
 
@@ -390,6 +391,12 @@ const DEFAULT_CONFIG = {
 	inputFiles: ['primitive-design-tokens.json'],
 }
 
+/** @returns {boolean} Whether `child` is `parent` or inside it. */
+const isInside = (child, parent) => {
+	const relative = path.relative(parent, child)
+	return !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
 class ConfigManager {
 	constructor() {
 		/** @type {TokensBuildConfig} */
@@ -468,9 +475,15 @@ class ConfigManager {
 			throw new Error('token-config.js needs at least one brand and one platform.')
 		}
 		const strayBrandSets = Object.keys(brandSets).filter((brand) => !brands.includes(brand))
-		const relativeTempDir = path.relative(this.config.buildPathPrefix, this.config.tempDir)
-		if (!relativeTempDir.startsWith('..') && !path.isAbsolute(relativeTempDir)) {
+		const { buildPathPrefix, tempDir, sourcePathPrefix } = this.config
+		if (isInside(tempDir, buildPathPrefix)) {
 			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
+		}
+		// The build deletes buildPathPrefix and the *.json files in tempDir.
+		for (const [key, dir] of Object.entries({ buildPathPrefix, tempDir })) {
+			if (isInside(PACKAGE_ROOT, dir) || isInside(dir, sourcePathPrefix) || isInside(sourcePathPrefix, dir)) {
+				throw new Error(`${key} must be a folder of its own inside the package, apart from sourcePathPrefix: the build deletes its contents.`)
+			}
 		}
 		if (strayBrandSets.length > 0) {
 			throw new Error(`brandSets key(s) not in brands: ${strayBrandSets.join(', ')}. Brands: ${brands.join(', ')}`)
@@ -640,20 +653,20 @@ import { fileURLToPath } from 'node:url'
  */
 
 /**
- * Return the token format of the first token found, or `undefined` if none.
+ * Add the token format of every leaf under `node` to `formats`. A legacy leaf
+ * needs a string `type`, since a DTCG token can be named `value`.
  * @param {unknown} node
- * @returns {'dtcg' | 'legacy' | undefined}
+ * @param {Set<'dtcg' | 'legacy'>} formats
+ * @returns {Set<'dtcg' | 'legacy'>}
  */
-function detectFormat(node) {
-	if (!node || typeof node !== 'object') return undefined
-	if ('$value' in node) return 'dtcg'
-	if ('value' in node && 'type' in node) return 'legacy'
+function collectFormats(node, formats = new Set()) {
+	if (!node || typeof node !== 'object') return formats
+	if ('$value' in node) return formats.add('dtcg')
+	if ('value' in node && typeof node.type === 'string') return formats.add('legacy')
 	for (const [key, child] of Object.entries(node)) {
-		if (key.startsWith('$')) continue
-		const format = detectFormat(child)
-		if (format) return format
+		if (!key.startsWith('$')) collectFormats(child, formats)
 	}
-	return undefined
+	return formats
 }
 
 /**
@@ -697,8 +710,11 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		}
 		// Style Dictionary picks DTCG or legacy once per build and drops tokens
 		// in the other format.
-		const format = detectFormat(parsed)
-		if (format) formatSource.set(format, formatSource.get(format) ?? inputFile)
+		const formats = collectFormats(parsed)
+		if (formats.size > 1) {
+			throw new Error(`${inputFile} mixes DTCG $value/$type and legacy value/type tokens. Export it in one format.`)
+		}
+		for (const format of formats) formatSource.set(format, formatSource.get(format) ?? inputFile)
 		if (formatSource.size > 1) {
 			throw new Error(`${formatSource.get('dtcg')} uses DTCG $value/$type and ${formatSource.get('legacy')} uses legacy value/type. Export all inputFiles in one format.`)
 		}
@@ -731,7 +747,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	for (const key of keysToProcess) {
 		const setValue = tokens[key]
-		if (setValue && typeof setValue === 'object' && ('value' in setValue || '$value' in setValue)) {
+		if (setValue && typeof setValue === 'object' && ('$value' in setValue || ('value' in setValue && typeof setValue.type === 'string'))) {
 			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
 	}
@@ -800,12 +816,16 @@ EOF
  *   4. Replace `dist/` with the staging directory. A failed Style Dictionary
  *      build leaves the previous `dist/` in place.
  *
+ * One build at a time: `temp/.build-lock` makes an overlapping build fail.
+ * `pnpm build:watch` (onchange) queues its runs, so the last change wins.
+ *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
  *   --skip-split                    Reuse existing temp/ contents. Not with --source.
  *   --verbose                       Verbose Style Dictionary logging.
  */
 
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -838,6 +858,43 @@ function parseArgs(argv) {
 	return out
 }
 
+/** @returns {boolean} */
+const isRunning = (pid) => {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch (error) {
+		return error.code === 'EPERM'
+	}
+}
+
+/**
+ * Hold `temp/.build-lock` for the whole build: overlapping builds share
+ * `temp/` and `dist/`, and the last to finish would win. A lock whose
+ * process is gone is taken over.
+ * @param {string} tempDir
+ */
+function acquireBuildLock(tempDir) {
+	const lockDir = path.join(tempDir, '.build-lock')
+	mkdirSync(tempDir, { recursive: true })
+	try {
+		mkdirSync(lockDir)
+	} catch (error) {
+		if (error.code !== 'EEXIST') throw error
+		let pid = Number.NaN
+		try {
+			pid = Number(readFileSync(path.join(lockDir, 'pid'), 'utf8'))
+		} catch {}
+		if (Number.isNaN(pid) || isRunning(pid)) {
+			throw new Error(`Another build (pid ${pid}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
+		}
+		rmSync(lockDir, { recursive: true, force: true })
+		mkdirSync(lockDir)
+	}
+	writeFileSync(path.join(lockDir, 'pid'), String(process.pid))
+	process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }))
+}
+
 const exec = async (argv = []) => {
 	console.log('[design-tokens] build started')
 
@@ -860,6 +917,13 @@ const exec = async (argv = []) => {
 	}
 
 	const { brands, platforms, buildPathPrefix, tempDir, brandSets } = brandPlatformConfig
+
+	try {
+		acquireBuildLock(tempDir)
+	} catch (error) {
+		console.error(`\n[design-tokens] ${error.message}`)
+		process.exit(1)
+	}
 
 	if (!cli.skipSplit) {
 		console.log(`[design-tokens] using source(s): ${splitConfig.inputFiles.join(', ')}`)
@@ -1231,7 +1295,7 @@ import { colorPrimary500 } from "@repo/design-tokens";
 # Full pipeline: split + per-brand Style Dictionary build
 pnpm build
 
-# Watch tokens, token-config.js, lib/, scripts/ — rebuild on change
+# Build, then rebuild on changes to tokens, token-config.js, lib/, scripts/ (runs queue, one at a time)
 pnpm build:watch
 
 # Run just the splitter (debugging)
@@ -1245,13 +1309,13 @@ pnpm clean
 
 | Flag            | Effect                                                            |
 | --------------- | ----------------------------------------------------------------- |
-| `--source=PATH` | Override `inputFiles[0]` with this path, absolute or relative to where you run `pnpm`. Needs the `=`. |
+| `--source=PATH` | Override `inputFiles[0]` with this path, absolute or relative to where you run `pnpm`. Needs the `=`; the shell does not expand `~` after it, so use `$HOME`. |
 | `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). Not with `--source`. |
 | `--verbose`     | Verbose Style Dictionary logging, e.g. to name broken references. |
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography token that aliases another, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix, also inside one file, fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography or composition token, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
 
 ### Adding a new brand
 
