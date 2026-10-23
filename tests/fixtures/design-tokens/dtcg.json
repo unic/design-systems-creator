@@ -34,6 +34,13 @@
     "subheading": {
       "$value": "{heading}",
       "$type": "typography"
+    },
+    "panel": {
+      "$value": {
+        "paddingTop": "8px",
+        "typography": "{subheading}"
+      },
+      "$type": "composition"
     }
   }
 }

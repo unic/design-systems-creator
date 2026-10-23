@@ -104,6 +104,13 @@ expect_css tokens.css "--heading-line-height: var(--scale-leading);"
 expect_css tokens.css "--heading-letter-spacing: -0.5px;"
 expect_css tokens.css "--leading-direct: 1.5;"
 expect_css tailwind-theme.css "--subheading-line-height: 1.5;"
+expect_css tailwind-theme.css "--panel-typography-line-height: 1.5;"
+
+sed -i.bak "s|brands: \['brandName'\],|brands: ['a', 'b'],|; s|brandSets: {},|brandSets: { a: ['Brand_A'], b: ['Brand_B'] },|" "$PACKAGE_DIR/token-config.js"
+build_with_inputs "'brands.json'"
+expect_css tailwind-theme.css "--line-heights-body: 1.5;"
+expect_css b/tailwind-theme.css "--line-heights-body: 24px;"
+sed -i.bak "s|brands: \['a', 'b'\],|brands: ['brandName'],|; s|brandSets: { a: \['Brand_A'\], b: \['Brand_B'\] },|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
 
 set_inputs "'themes.json'"
 expect_build_failure "two themes of one brand collide" "one theme set per brand) in brandSets"
