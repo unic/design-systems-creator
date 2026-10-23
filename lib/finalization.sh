@@ -124,7 +124,7 @@ monorepo/
 │   │   ├── tokens/           # Token source files (from Tokens Studio)
 │   │   ├── lib/, scripts/    # Split + per-brand Style Dictionary build
 │   │   ├── token-config.js   # Build config (brands, platforms, sets)
-│   │   └── package.json      # devDeps: style-dictionary, @tokens-studio/sd-transforms (catalog:)
+│   │   └── package.json      # devDeps: style-dictionary, @tokens-studio/sd-transforms, onchange, typescript (catalog:)
 │   │
 │   ├── tailwind-config/      # Shared Tailwind + PostCSS configuration
 │   │   ├── tailwind.config.js

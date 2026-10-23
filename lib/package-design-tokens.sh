@@ -455,7 +455,26 @@ class ConfigManager {
 	}
 
 	/** @returns {{inputFiles: string[], outputDir: string, includeKeys: string[], excludeKeys: string[]}} */
+	/**
+	 * The build replaces buildPathPrefix and deletes the *.json files in
+	 * tempDir, so neither may hold the package or any source file.
+	 * @returns {void}
+	 */
+	validatePaths() {
+		const { buildPathPrefix, tempDir, sourcePathPrefix } = this.config
+		if (isInside(tempDir, buildPathPrefix)) {
+			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
+		}
+		const inputFiles = this.getInputFilePaths()
+		for (const [key, dir] of Object.entries({ buildPathPrefix, tempDir })) {
+			if (isInside(PACKAGE_ROOT, dir) || isInside(sourcePathPrefix, dir) || inputFiles.some((file) => isInside(file, dir))) {
+				throw new Error(`${key} must not be the package folder or a parent of it, and must not hold sourcePathPrefix or an input file: the build deletes its contents.`)
+			}
+		}
+	}
+
 	getSplitConfig() {
+		this.validatePaths()
 		const { excludeKeys, includeKeys } = this.config
 		if (includeKeys.length > 0 && excludeKeys.length > 0) {
 			throw new Error('Cannot specify both includeKeys and excludeKeys in token-config.js. Choose one approach.')
@@ -475,16 +494,7 @@ class ConfigManager {
 			throw new Error('token-config.js needs at least one brand and one platform.')
 		}
 		const strayBrandSets = Object.keys(brandSets).filter((brand) => !brands.includes(brand))
-		const { buildPathPrefix, tempDir, sourcePathPrefix } = this.config
-		if (isInside(tempDir, buildPathPrefix)) {
-			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
-		}
-		// The build deletes buildPathPrefix and the *.json files in tempDir.
-		for (const [key, dir] of Object.entries({ buildPathPrefix, tempDir })) {
-			if (isInside(PACKAGE_ROOT, dir) || isInside(dir, sourcePathPrefix) || isInside(sourcePathPrefix, dir)) {
-				throw new Error(`${key} must be a folder of its own inside the package, apart from sourcePathPrefix: the build deletes its contents.`)
-			}
-		}
+		this.validatePaths()
 		if (strayBrandSets.length > 0) {
 			throw new Error(`brandSets key(s) not in brands: ${strayBrandSets.join(', ')}. Brands: ${brands.join(', ')}`)
 		}
@@ -499,6 +509,62 @@ class ConfigManager {
 }
 
 export default ConfigManager
+EOF
+
+	cat >lib/buildLock.mjs <<'EOF'
+/**
+ * @fileoverview
+ * One build or split at a time per package: they share `temp/` and `dist/`,
+ * and the last to finish would win. `pnpm build:watch` (onchange) queues its
+ * own runs; this lock makes any other overlap fail with a message.
+ */
+
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+
+/** A lock without a pid younger than this may still be starting up. */
+const STARTUP_GRACE_MS = 10_000
+
+/** @param {number} pid */
+const isRunning = (pid) => {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch (error) {
+		return error.code === 'EPERM'
+	}
+}
+
+/**
+ * Hold `<tempDir>/.build-lock` until the process exits. A lock whose process
+ * is gone, or that carries this process's own pid (a reused pid, e.g. in a
+ * container), is taken over.
+ * @param {string} tempDir
+ * @returns {void}
+ */
+function acquireBuildLock(tempDir) {
+	const lockDir = path.join(tempDir, '.build-lock')
+	mkdirSync(tempDir, { recursive: true })
+	try {
+		mkdirSync(lockDir)
+	} catch (error) {
+		if (error.code !== 'EEXIST') throw error
+		let pid = 0
+		try {
+			pid = Number.parseInt(readFileSync(path.join(lockDir, 'pid'), 'utf8'), 10)
+		} catch {}
+		const isStarting = !(pid > 0) && Date.now() - statSync(lockDir).mtimeMs < STARTUP_GRACE_MS
+		if (isStarting || (pid > 0 && pid !== process.pid && isRunning(pid))) {
+			throw new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
+		}
+		rmSync(lockDir, { recursive: true, force: true })
+		mkdirSync(lockDir)
+	}
+	writeFileSync(path.join(lockDir, 'pid'), String(process.pid))
+	process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }))
+}
+
+export default acquireBuildLock
 EOF
 
 	cat >lib/buildBrands.mjs <<'EOF'
@@ -788,10 +854,13 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 // Compare filesystem paths: `import.meta.url` is URL-encoded and symlink-resolved.
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
 	const { default: ConfigManager } = await import('../lib/configManager.mjs')
+	const { default: acquireBuildLock } = await import('../lib/buildLock.mjs')
 	const configManager = new ConfigManager()
 	try {
 		await configManager.loadFromFile()
-		await splitDesignTokens(configManager.getSplitConfig())
+		const splitConfig = configManager.getSplitConfig()
+		acquireBuildLock(configManager.config.tempDir)
+		await splitDesignTokens(splitConfig)
 		console.log('\n[split] done.')
 	} catch (error) {
 		console.error(`\n[split] failed: ${error.message}`)
@@ -816,8 +885,9 @@ EOF
  *   4. Replace `dist/` with the staging directory. A failed Style Dictionary
  *      build leaves the previous `dist/` in place.
  *
- * One build at a time: `temp/.build-lock` makes an overlapping build fail.
- * `pnpm build:watch` (onchange) queues its runs, so the last change wins.
+ * One build at a time: `temp/.build-lock` (lib/buildLock.mjs) makes an
+ * overlapping build or split fail. `pnpm build:watch` (onchange) queues its
+ * runs, so the last change wins.
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
@@ -825,10 +895,10 @@ EOF
  *   --verbose                       Verbose Style Dictionary logging.
  */
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import acquireBuildLock from '../lib/buildLock.mjs'
 import buildBrands from '../lib/buildBrands.mjs'
 import ConfigManager from '../lib/configManager.mjs'
 import registerTransforms from '../lib/registerTransforms.mjs'
@@ -856,43 +926,6 @@ function parseArgs(argv) {
 		throw new Error('--source has no effect with --skip-split. Drop one of them.')
 	}
 	return out
-}
-
-/** @returns {boolean} */
-const isRunning = (pid) => {
-	try {
-		process.kill(pid, 0)
-		return true
-	} catch (error) {
-		return error.code === 'EPERM'
-	}
-}
-
-/**
- * Hold `temp/.build-lock` for the whole build: overlapping builds share
- * `temp/` and `dist/`, and the last to finish would win. A lock whose
- * process is gone is taken over.
- * @param {string} tempDir
- */
-function acquireBuildLock(tempDir) {
-	const lockDir = path.join(tempDir, '.build-lock')
-	mkdirSync(tempDir, { recursive: true })
-	try {
-		mkdirSync(lockDir)
-	} catch (error) {
-		if (error.code !== 'EEXIST') throw error
-		let pid = Number.NaN
-		try {
-			pid = Number(readFileSync(path.join(lockDir, 'pid'), 'utf8'))
-		} catch {}
-		if (Number.isNaN(pid) || isRunning(pid)) {
-			throw new Error(`Another build (pid ${pid}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
-		}
-		rmSync(lockDir, { recursive: true, force: true })
-		mkdirSync(lockDir)
-	}
-	writeFileSync(path.join(lockDir, 'pid'), String(process.pid))
-	process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }))
 }
 
 const exec = async (argv = []) => {
@@ -1227,6 +1260,7 @@ The pipeline uses the [`@tokens-studio/sd-transforms`](https://github.com/tokens
 design-tokens/
 ├── lib/                              # Build engine (modular ESM)
 │   ├── buildBrands.mjs               # Brand × platform orchestrator
+│   ├── buildLock.mjs                 # One build or split at a time
 │   ├── configManager.mjs             # Loads token-config.js over defaults
 │   ├── platformConfigs.mjs           # Per-platform Style Dictionary factories
 │   └── registerTransforms.mjs        # Preprocessors, value transforms, Tailwind format
