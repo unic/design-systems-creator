@@ -87,14 +87,19 @@ function registerTransforms() {
 		name: 'value/unitless-px',
 		type: 'value',
 		transitive: true,
-		// Strings only: Tokens Studio exports bare numbers as strings, while
-		// `ts/size/lineheight` turns `150%` into the number `1.5`, which an alias
-		// to it must keep.
-		filter: (token) =>
-			['lineHeight', 'lineHeights', 'letterSpacing'].includes(token.$type ?? token.type) &&
-			typeof (token.$value ?? token.value) === 'string' &&
-			/^-?(\d+\.?\d*|\.\d+)$/.test((token.$value ?? token.value).trim()) &&
-			Number(token.$value ?? token.value) !== 0,
+		filter: (token) => {
+			const type = token.$type ?? token.type
+			const value = token.$value ?? token.value
+			if (!['lineHeight', 'lineHeights', 'letterSpacing'].includes(type)) return false
+			if (typeof value === 'number') {
+				// A number here comes from math, a JSON number, or a `150%` line
+				// height that `ts/size/lineheight` already made relative. A line
+				// height that is a pure alias keeps its number: it is relative.
+				const isAlias = /^\{[^{}]+\}$/.test(String(token.original.$value ?? token.original.value).trim())
+				return value !== 0 && !(type !== 'letterSpacing' && isAlias)
+			}
+			return typeof value === 'string' && /^-?(\d+\.?\d*|\.\d+)$/.test(value.trim()) && Number(value) !== 0
+		},
 		transform: (token) => `${String(token.$value ?? token.value).trim()}px`,
 	})
 
@@ -807,7 +812,8 @@ const exec = async (argv = []) => {
 		await buildBrands(brands, { buildPathPrefix: stagingPath, tempDir, platforms, brandSets, verbose: cli.verbose })
 	} catch (error) {
 		await fs.rm(stagingPath, { recursive: true, force: true })
-		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}\nRerun with --verbose for details.`)
+		const hint = /collision/i.test(error.message) ? '\nLoading two theme sets of one brand collides: list one theme set per brand in brandSets.' : ''
+		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}${hint}\nRerun with --verbose for details.`)
 		process.exit(1)
 	}
 	try {
@@ -998,12 +1004,12 @@ add_design_tokens_sample() {
         "bold":     { "$value": "700", "$type": "fontWeight" }
       },
       "line-height": {
-        "none":    { "$value": "1",     "$type": "number" },
-        "tight":   { "$value": "1.25",  "$type": "number" },
-        "snug":    { "$value": "1.375", "$type": "number" },
-        "normal":  { "$value": "1.5",   "$type": "number" },
-        "relaxed": { "$value": "1.625", "$type": "number" },
-        "loose":   { "$value": "2",     "$type": "number" }
+        "none":    { "$value": 1,     "$type": "number" },
+        "tight":   { "$value": 1.25,  "$type": "number" },
+        "snug":    { "$value": 1.375, "$type": "number" },
+        "normal":  { "$value": 1.5,   "$type": "number" },
+        "relaxed": { "$value": 1.625, "$type": "number" },
+        "loose":   { "$value": 2,     "$type": "number" }
       }
     },
     "semantic": {
@@ -1175,7 +1181,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing written as a bare number string is in pixels (`"1.5"` → `1.5px`), also when a typography token references it; use `150%` for a relative line height. A JSON number (`"$value": 24`, as Figma Variables export) stays unitless, so a line height that references one acts as a multiplier.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math or from a typography token. Exception: a line height that is a pure alias (`{lineHeights.body}`) to a percentage or to a JSON-number token (`"$value": 1.5`) stays relative, as in the sample. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it.
 
 ### Adding a new brand
 
