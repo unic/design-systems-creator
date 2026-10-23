@@ -6,8 +6,9 @@
 # Generates the design tokens build pipeline and sample into a temp folder,
 # builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
 # CSS output (including every variable the Storybook stories use), builds two
-# brands, and checks that colliding themes, mixed formats and an overlapping
-# build fail. Pins style-dictionary@5 and @tokens-studio/sd-transforms@2;
+# brands, and checks that colliding themes, mixed formats, values without a
+# CSS form, a build path over the build engine and an overlapping build fail,
+# and that a stale lock is taken over and released. Pins style-dictionary@5 and @tokens-studio/sd-transforms@2;
 # generated repos resolve the latest versions through the catalog. Needs
 # network for `pnpm add`.
 
@@ -134,7 +135,14 @@ expect_build_failure "mixed DTCG and legacy inputs" "Export all inputFiles in on
 set_inputs "'mixed.json'"
 expect_build_failure "mixed formats in one export" "mixes DTCG \$value/\$type and legacy value/type tokens"
 
+set_inputs "'gradient.json'"
+expect_build_failure "object values without a CSS form" "Rerun with --verbose"
+
 set_inputs "'primitive-design-tokens.json'"
+sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: 'lib',|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "build path over lib/" "buildPathPrefix must not be or hold the package folder"
+sed -i.bak "s|brandSets: {}, buildPathPrefix: 'lib',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
+
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
 echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"
 expect_build_failure "overlapping build" "Another build (pid $$)"
