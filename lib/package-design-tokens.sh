@@ -62,7 +62,9 @@ add_design_tokens_config() {
 /**
  * @fileoverview
  * Registers the `tokens-studio` preprocessor + transform group on Style
- * Dictionary, plus our custom Tailwind v4 `@theme` CSS format.
+ * Dictionary (with our `value/unitless-px` and without `size/rem`), the
+ * `value/line-height-auto` and `value/css-serializable` transforms for CSS
+ * platforms, and our custom Tailwind v4 `@theme` CSS format.
  *
  * `excludeParentKeys` stays off: the splitter already removes each set-name
  * wrapper, so the preprocessor must not strip another level.
@@ -79,28 +81,25 @@ function registerTransforms() {
 
 	// Tokens Studio applies a unitless line height or letter spacing as pixels;
 	// in CSS a bare line height is a multiplier and a bare letter spacing is
-	// invalid. Runs before `expand`, so it also fixes typography properties.
-	const UNITLESS_PX_TYPES = new Set(['lineHeights', 'lineHeight', 'letterSpacing'])
-	const toPx = (value) => (/^-?(\d+\.?\d*|\.\d+)$/.test(String(value).trim()) && Number(value) !== 0 ? `${String(value).trim()}px` : value)
-	StyleDictionary.registerPreprocessor({
-		name: 'unitless-px',
-		preprocessor: (dictionary) => {
-			const walk = (node) => {
-				if (!node || typeof node !== 'object') return
-				const key = '$value' in node ? '$value' : 'value' in node ? 'value' : null
-				if (!key) return Object.values(node).forEach(walk)
-				const type = node.$type ?? node.type
-				if (UNITLESS_PX_TYPES.has(type)) node[key] = toPx(node[key])
-				if (type === 'typography' && node[key] && typeof node[key] === 'object') {
-					for (const property of ['lineHeight', 'letterSpacing']) {
-						if (property in node[key]) node[key][property] = toPx(node[key][property])
-					}
-				}
-			}
-			walk(dictionary)
-			return dictionary
-		},
+	// invalid. Transitive, so it also sees values that come from a reference
+	// to a `number` token and expanded typography / composition properties.
+	StyleDictionary.registerTransform({
+		name: 'value/unitless-px',
+		type: 'value',
+		transitive: true,
+		filter: (token) =>
+			['lineHeight', 'lineHeights', 'letterSpacing'].includes(token.$type ?? token.type) &&
+			/^-?(\d+\.?\d*|\.\d+)$/.test(String(token.$value ?? token.value).trim()) &&
+			Number(token.$value ?? token.value) !== 0,
+		transform: (token) => `${String(token.$value ?? token.value).trim()}px`,
 	})
+
+	// Rebuild the group: run `value/unitless-px` before the Tokens Studio size
+	// transforms, and drop Style Dictionary's `size/rem`, which turns a
+	// multi-value `8px 16px` into `8 16pxpx`.
+	const tokensStudioGroup = StyleDictionary.hooks.transformGroups['tokens-studio'].filter((name) => name !== 'size/rem')
+	tokensStudioGroup.splice(tokensStudioGroup.indexOf('ts/size/lineheight'), 0, 'value/unitless-px')
+	StyleDictionary.registerTransformGroup({ name: 'tokens-studio', transforms: tokensStudioGroup })
 
 	// Tokens Studio exports Figma "Auto" line height as `AUTO`, which is invalid CSS.
 	StyleDictionary.registerTransform({
@@ -164,7 +163,9 @@ EOF
  * Trimmed for our Tailwind-v4-first setup. Each factory returns a fully-formed
  * platform config to plug into Style Dictionary. To add platforms (iOS, Android,
  * SCSS, etc.), add a factory here and register its key in `PLATFORM_FACTORIES`
- * — see https://github.com/orioltf/poc-tokens for examples.
+ * — see https://github.com/orioltf/poc-tokens for examples. A CSS-based
+ * platform needs `value/line-height-auto` and `value/css-serializable` in
+ * `transforms`, as below.
  */
 
 import { outputReferencesFilter, outputReferencesTransformed } from 'style-dictionary/utils'
@@ -501,7 +502,7 @@ async function buildBrands(brands, options) {
 				// Style Dictionary reads `source` entries as globs: escape set names
 				// and paths such as `[Brand] A`.
 				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
-				preprocessors: ['unitless-px', 'tokens-studio'],
+				preprocessors: ['tokens-studio'],
 				// One variable per property: the CSS `font` shorthand cannot hold
 				// `letterSpacing` and friends, and composition has no CSS form.
 				expand: { include: ['typography', 'composition'], typesMap: TYPES_MAP },
@@ -646,6 +647,13 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	console.log(`[split] processing ${keysToProcess.length} set(s) from ${allKeys.length} top-level key(s)`)
 
+	for (const key of keysToProcess) {
+		const setValue = tokens[key]
+		if (setValue && typeof setValue === 'object' && ('value' in setValue || '$value' in setValue)) {
+			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
+		}
+	}
+
 	await fs.mkdir(outputDir, { recursive: true })
 	// Wipe the temp dir so removed sets don't linger between runs.
 	for (const entry of await fs.readdir(outputDir)) {
@@ -659,9 +667,6 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		if (!setValue || typeof setValue !== 'object' || Object.keys(setValue).length === 0) {
 			console.warn(`[split] skipping "${key}" — empty or non-object set`)
 			continue
-		}
-		if ('value' in setValue || '$value' in setValue) {
-			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
 
 		const filename = `${key.replace(/\//g, '_')}.json`
@@ -1161,7 +1166,7 @@ pnpm clean
 
 ## Tokens Studio integration
 
-Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`1.5` → `1.5px`); use `150%` for a relative line height.
 
 ### Adding a new brand
 
@@ -1171,7 +1176,7 @@ Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sam
 
 ### Adding a new platform
 
-1. Implement a factory in `lib/platformConfigs.mjs`.
+1. Implement a factory in `lib/platformConfigs.mjs`. For a CSS-based platform, add `'value/line-height-auto'` and `'value/css-serializable'` to `transforms`, as the existing CSS factories do.
 2. Register it in the `PLATFORM_FACTORIES` map.
 3. Add its key to `platforms` in `token-config.js`.
 EOF
