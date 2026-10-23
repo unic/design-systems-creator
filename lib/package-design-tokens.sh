@@ -17,7 +17,7 @@ create_design_tokens_package() {
 
 	jq \
 		--arg name "@repo/design-tokens" \
-		--arg description "Design tokens for the ${ORGANIZATION_NAME} Design System (Style Dictionary + Tokens Studio)" \
+		--arg description "Design tokens for the ${ORGANIZATION_NAME} Design System (Style Dictionary + DTCG)" \
 		--arg author "${DEVELOPER}" \
 		'. + {
 			name: $name,
@@ -41,6 +41,7 @@ create_design_tokens_package() {
 				"typecheck": "tsc --noEmit"
 			},
 			devDependencies: {
+				"@repo/typescript-config": "workspace:*",
 				"@tokens-studio/sd-transforms": "catalog:",
 				"chokidar-cli": "catalog:",
 				"style-dictionary": "catalog:",
@@ -72,11 +73,7 @@ add_design_tokens_config() {
 import StyleDictionary from 'style-dictionary'
 import { register as registerTokensStudio } from '@tokens-studio/sd-transforms'
 
-/**
- * Register the `tokens-studio` preprocessor and transform group on Style
- * Dictionary, plus our custom Tailwind format.
- * @returns {void}
- */
+/** @returns {void} */
 function registerTransforms() {
 	registerTokensStudio(StyleDictionary)
 
@@ -96,7 +93,11 @@ function registerTransforms() {
 
 			for (const token of dictionary.allTokens) {
 				const cssVarName = `--${token.name}`
-				const value = token.$value ?? token.value
+				const rawValue = token.$value ?? token.value
+				const value = Array.isArray(rawValue) ? rawValue.join(', ') : rawValue
+				if (value === undefined || typeof value === 'object') {
+					throw new Error(`Token "${token.path.join('.')}" has no CSS-serializable value. Composite types such as composition are not supported.`)
+				}
 				lines.push(`\t${cssVarName}: ${value};`)
 			}
 
@@ -116,8 +117,8 @@ EOF
  *
  * Trimmed for our Tailwind-v4-first setup. Each factory returns a fully-formed
  * platform config to plug into Style Dictionary. To add platforms (iOS, Android,
- * SCSS, etc.), add a factory here and reference it from `getAllPlatforms` —
- * see https://github.com/orioltf/poc-tokens for examples.
+ * SCSS, etc.), add a factory here and register its key in `PLATFORM_FACTORIES`
+ * — see https://github.com/orioltf/poc-tokens for examples.
  */
 
 import { outputReferencesFilter } from 'style-dictionary/utils'
@@ -139,7 +140,6 @@ export function createTailwindCssPlatform(buildPath) {
 			{
 				destination: 'tailwind-theme.css',
 				format: 'tailwind/theme-css',
-				options: { outputReferences: false },
 			},
 		],
 	}
@@ -162,10 +162,9 @@ export function createCssVarsPlatform(buildPath) {
 				destination: 'tokens.css',
 				format: 'css/variables',
 				options: {
-					// Emit `var(--ref-name)` for references that resolve; inline the
-					// value otherwise. Prevents dangling `var(--missing)` in shipped
-					// CSS when a referenced token is filtered out or absent from the
-					// source export.
+					// Keep `var(--ref-name)` only when the referenced token is in this
+					// file's output; inline the value otherwise (e.g. when a filter
+					// drops the target). Missing references fail the build instead.
 					// https://styledictionary.com/reference/utils/references/#outputreferencesfilter
 					outputReferences: outputReferencesFilter,
 				},
@@ -258,7 +257,7 @@ const PACKAGE_ROOT = path.resolve(__dirname, '..')
 const DEFAULT_CONFIG = {
 	brands: ['brandName'],
 	platforms: ['tailwind-css', 'css-vars'],
-	excludeKeys: ['$themes', '$metadata'],
+	excludeKeys: [],
 	includeKeys: [],
 	brandSets: {},
 	sourcePathPrefix: path.join(PACKAGE_ROOT, 'tokens'),
@@ -276,31 +275,33 @@ class ConfigManager {
 	/**
 	 * Load and merge user config from a JS module file. Falls back to defaults
 	 * only when the file is absent; load errors propagate.
-	 * @param {string} configPath - Absolute path to a `token-config.js` module.
+	 * @param {string} [configPath] - Absolute path to a `token-config.js` module.
 	 * @returns {Promise<TokensBuildConfig>}
 	 */
-	async loadFromFile(configPath) {
+	async loadFromFile(configPath = path.join(PACKAGE_ROOT, 'token-config.js')) {
 		if (!existsSync(configPath)) {
 			console.warn(`[design-tokens] No config at ${configPath}. Using defaults.`)
 			return this.config
 		}
 		const mod = await import(pathToFileURL(configPath).href)
-		this.mergeConfig(mod.default ?? {})
+		if (!mod.default || typeof mod.default !== 'object') {
+			throw new Error(`${configPath} must have a default export with the config object.`)
+		}
+		this.mergeConfig(mod.default)
 		return this.config
 	}
 
 	/**
-	 * Shallow-merge user config over defaults (only known keys win).
+	 * Shallow-merge user config over defaults. Unknown keys throw.
 	 * @param {Partial<TokensBuildConfig>} userConfig
 	 * @returns {TokensBuildConfig}
 	 */
 	mergeConfig(userConfig) {
-		if (!userConfig) return this.config
-		for (const key of Object.keys(userConfig)) {
-			if (key in this.config) {
-				this.config[key] = userConfig[key]
-			}
+		const unknown = Object.keys(userConfig).filter((key) => !(key in DEFAULT_CONFIG))
+		if (unknown.length > 0) {
+			throw new Error(`Unknown token-config.js key(s): ${unknown.join(', ')}. Known: ${Object.keys(DEFAULT_CONFIG).join(', ')}`)
 		}
+		Object.assign(this.config, userConfig)
 		return this.config
 	}
 
@@ -327,6 +328,14 @@ class ConfigManager {
 
 	/** @returns {{brands: string[], platforms: string[], buildPathPrefix: string, tempDir: string, brandSets: Record<string,string[]>}} */
 	getBrandPlatformConfig() {
+		const { brands, platforms, brandSets } = this.config
+		if (brands.length === 0 || platforms.length === 0) {
+			throw new Error('token-config.js needs at least one brand and one platform.')
+		}
+		const strayBrandSets = Object.keys(brandSets).filter((brand) => !brands.includes(brand))
+		if (strayBrandSets.length > 0) {
+			throw new Error(`brandSets key(s) not in brands: ${strayBrandSets.join(', ')}. Brands: ${brands.join(', ')}`)
+		}
 		return {
 			brands: this.config.brands,
 			platforms: this.config.platforms,
@@ -361,6 +370,7 @@ import { getPlatformsForBrand } from './platformConfigs.mjs'
  * @property {string[]} platforms
  * @property {Record<string, string[]>} brandSets - Optional per-brand subset
  *   of split set-file *basenames* (without `.json`). Empty/missing → use all.
+ * @property {boolean} [verbose] - Verbose Style Dictionary logging.
  */
 
 /**
@@ -391,7 +401,8 @@ function resolveSourceFiles(brand, options) {
 }
 
 /**
- * Build all brand × platform combinations.
+ * Build all brand × platform combinations. The first brand builds to
+ * `buildPathPrefix`; further brands to `buildPathPrefix/<brand>/`.
  *
  * @param {string[]} brands
  * @param {BuildOptions} options
@@ -403,22 +414,28 @@ async function buildBrands(brands, options) {
 		console.log(`\n[${brand}] using ${sourceFiles.length} set file(s):`)
 		for (const file of sourceFiles) console.log(`  - ${path.basename(file)}`)
 
-		// The first brand is the default bundle at the `dist/` root, which the package
-		// `exports` point to. Further brands go to `dist/<brand>/`.
+		// The first brand is the default bundle the package `exports` point to.
 		const brandBuildPath = index === 0 ? options.buildPathPrefix : path.join(options.buildPathPrefix, brand)
 		const platforms = getPlatformsForBrand(brandBuildPath, options.platforms)
 
-		const sd = new StyleDictionary({
-			source: sourceFiles,
-			preprocessors: ['tokens-studio'],
-			platforms,
-			log: {
-				warnings: 'warn',
-				verbosity: 'default',
-				errors: { brokenReferences: 'throw' },
+		// `init: false` + `await sd.init()` so errors raised while loading sources
+		// (e.g. token collisions) reject here instead of as an unhandled rejection.
+		const sd = new StyleDictionary(
+			{
+				source: sourceFiles,
+				preprocessors: ['tokens-studio'],
+				platforms,
+				log: {
+					// Token collisions and empty output files mean wrong or missing CSS.
+					warnings: 'error',
+					verbosity: options.verbose ? 'verbose' : 'default',
+					errors: { brokenReferences: 'throw' },
+				},
 			},
-		})
+			{ init: false },
+		)
 
+		await sd.init()
 		await sd.buildAllPlatforms()
 		console.log(`[${brand}] built platforms: ${Object.keys(platforms).join(', ')}`)
 	}
@@ -468,12 +485,6 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	console.log(`[split] outDir:  ${outputDir}`)
 
-	await fs.mkdir(outputDir, { recursive: true })
-	// Wipe the temp dir so removed sets don't linger between runs.
-	for (const entry of await fs.readdir(outputDir)) {
-		if (entry.endsWith('.json')) await fs.rm(path.join(outputDir, entry))
-	}
-
 	// Read and merge all source files into one token map.
 	const tokens = {}
 	for (const inputFile of inputFiles) {
@@ -520,6 +531,12 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 
 	console.log(`[split] processing ${keysToProcess.length} set(s) from ${allKeys.length} top-level key(s)`)
 
+	await fs.mkdir(outputDir, { recursive: true })
+	// Wipe the temp dir so removed sets don't linger between runs.
+	for (const entry of await fs.readdir(outputDir)) {
+		if (entry.endsWith('.json')) await fs.rm(path.join(outputDir, entry))
+	}
+
 	const generated = []
 	const setByFilename = new Map()
 	for (const key of keysToProcess) {
@@ -552,7 +569,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.a
 	const { default: ConfigManager } = await import('../lib/configManager.mjs')
 	const configManager = new ConfigManager()
 	try {
-		await configManager.loadFromFile(path.resolve(process.cwd(), 'token-config.js'))
+		await configManager.loadFromFile()
 		await splitDesignTokens(configManager.getSplitConfig())
 		console.log('\n[split] done.')
 	} catch (error) {
@@ -570,14 +587,18 @@ EOF
  * Main entry point for the design tokens build.
  *
  * Pipeline:
- *   1. Load `token-config.js` (defaults apply only when the file is absent).
+ *   1. Load the package's `token-config.js` (defaults apply only when the
+ *      file is absent).
  *   2. Split the configured `inputFiles` into per-set files in `temp/`.
  *   3. For each configured brand, run Style Dictionary against the relevant
- *      set files for the configured platforms. Outputs land in `dist/`.
+ *      set files for the configured platforms, into `temp/dist-staging/`.
+ *   4. Replace `dist/` with the staging directory. A failed build leaves the
+ *      previous `dist/` in place.
  *
- * CLI flags (optional):
+ * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
  *   --skip-split                    Reuse existing temp/ contents.
+ *   --verbose                       Verbose Style Dictionary logging.
  */
 
 import fs from 'node:fs/promises'
@@ -591,41 +612,47 @@ import splitDesignTokens from './split-design-tokens.mjs'
 registerTransforms()
 
 /**
- * Parse simple `--key=value` and `--flag` CLI args.
+ * Parse `--source=PATH`, `--skip-split` and `--verbose`. Anything else throws.
  * @param {string[]} argv
- * @returns {{ source?: string, skipSplit: boolean }}
+ * @returns {{ source?: string, skipSplit: boolean, verbose: boolean }}
  */
 function parseArgs(argv) {
-	const out = { skipSplit: false }
+	const out = { skipSplit: false, verbose: false }
 	for (const arg of argv) {
 		if (arg === '--skip-split') out.skipSplit = true
+		else if (arg === '--verbose') out.verbose = true
 		else if (arg.startsWith('--source=')) out.source = arg.slice('--source='.length)
+		else throw new Error(`Unknown argument "${arg}". Use --source=PATH, --skip-split or --verbose.`)
+	}
+	if (out.source && out.skipSplit) {
+		throw new Error('--source has no effect with --skip-split. Drop one of them.')
 	}
 	return out
 }
 
 const exec = async (argv = []) => {
-	const cli = parseArgs(argv)
 	console.log('[design-tokens] build started')
 
 	const configManager = new ConfigManager()
-	let splitConfig
+	let cli, splitConfig, brandPlatformConfig
 	try {
-		await configManager.loadFromFile(path.resolve(process.cwd(), 'token-config.js'))
+		cli = parseArgs(argv)
+		await configManager.loadFromFile()
 		if (cli.source) {
 			const [, ...supplementaryFiles] = configManager.config.inputFiles
 			configManager.mergeConfig({ inputFiles: [path.resolve(process.cwd(), cli.source), ...supplementaryFiles] })
 		}
 		splitConfig = configManager.getSplitConfig()
+		brandPlatformConfig = configManager.getBrandPlatformConfig()
 	} catch (error) {
-		console.error(`\n[design-tokens] loading token-config.js failed: ${error.message}`)
+		console.error(`\n[design-tokens] invalid arguments or config: ${error.message}`)
 		process.exit(1)
 	}
-	console.log(`[design-tokens] using source(s): ${splitConfig.inputFiles.join(', ')}`)
 
-	const { brands, platforms, buildPathPrefix, tempDir, brandSets } = configManager.getBrandPlatformConfig()
+	const { brands, platforms, buildPathPrefix, tempDir, brandSets } = brandPlatformConfig
 
 	if (!cli.skipSplit) {
+		console.log(`[design-tokens] using source(s): ${splitConfig.inputFiles.join(', ')}`)
 		try {
 			await splitDesignTokens(splitConfig)
 		} catch (error) {
@@ -636,15 +663,19 @@ const exec = async (argv = []) => {
 		console.log('[design-tokens] --skip-split: reusing existing temp/ files')
 	}
 
-	// Wipe `dist/` before each build so removed tokens / renamed files don't linger.
-	await fs.rm(buildPathPrefix, { recursive: true, force: true })
-
+	// Build into a fresh staging dir, then swap it in: removed tokens / renamed
+	// files don't linger, and a failed build keeps the previous `dist/`.
+	const stagingPath = path.join(tempDir, 'dist-staging')
+	await fs.rm(stagingPath, { recursive: true, force: true })
 	try {
-		await buildBrands(brands, { buildPathPrefix, tempDir, platforms, brandSets })
+		await buildBrands(brands, { buildPathPrefix: stagingPath, tempDir, platforms, brandSets, verbose: cli.verbose })
 	} catch (error) {
+		await fs.rm(stagingPath, { recursive: true, force: true })
 		console.error(`\n[design-tokens] style-dictionary build failed: ${error.message}`)
 		process.exit(1)
 	}
+	await fs.rm(buildPathPrefix, { recursive: true, force: true })
+	await fs.rename(stagingPath, buildPathPrefix)
 
 	console.log('\n[design-tokens] build complete.')
 }
@@ -659,7 +690,8 @@ EOF
  *
  * Drives the splitter and Style Dictionary build for `@repo/design-tokens`.
  * Adapted from the multi-brand POC at https://github.com/orioltf/poc-tokens
- * and trimmed for a single-brand, Tailwind-v4-first setup.
+ * and trimmed for a Tailwind-v4-first setup. Builds one brand by default.
+ * Unknown keys fail the build.
  *
  * To add a brand: append to `brands` and (optionally) configure per-brand
  * set inclusion via `brandSets`. To add a platform: implement a factory in
@@ -667,7 +699,10 @@ EOF
  */
 
 export default {
-	/** Brands to build. One output bundle per brand. */
+	/**
+	 * Brands to build, one bundle per brand. The first brand builds to `dist/`
+	 * (the package `exports`); each further brand builds to `dist/<brand>/`.
+	 */
 	brands: ['brandName'],
 
 	/**
@@ -694,29 +729,30 @@ export default {
 	/**
 	 * Token-set splitting strategy.
 	 *
-	 * - `excludeKeys`: drop these top-level keys before splitting. Defaults
-	 *   skip Tokens Studio internals (`$themes`, `$metadata`) and the
-	 *   conventional empty `global` set.
-	 * - `includeKeys`: if non-empty, ONLY these keys are split. Mutually
+	 * `$`-prefixed Tokens Studio metadata (`$themes`, `$metadata`) is always
+	 * skipped.
+	 *
+	 * - `excludeKeys`: drop these top-level sets before splitting. `global`
+	 *   is listed so the conventional empty `global` set is not split.
+	 * - `includeKeys`: if non-empty, ONLY these sets are split. Mutually
 	 *   exclusive with `excludeKeys`, so empty `excludeKeys` when you set it.
 	 */
-	excludeKeys: ['$themes', '$metadata', 'global'],
+	excludeKeys: ['global'],
 	includeKeys: [],
 
 	/**
 	 * Per-brand set selection. Maps brand → array of set-file basenames
 	 * (without `.json`). Slashes in Tokens Studio set names become
 	 * underscores in filenames (e.g. `Theme/Brand Light` → `Theme_Brand Light`).
-	 * An unknown basename fails the build.
+	 * An unknown basename, or a key that is not in `brands`, fails the build.
 	 *
 	 * IMPORTANT: split files hold the set contents without the set name, so
-	 * two theme sets that define the same token paths (Light + Dark) overwrite
-	 * each other when loaded together. Pick ONE theme variant per brand here,
-	 * plus any non-theme support sets (Components, Viewport, etc.).
+	 * two theme sets that define the same token paths (Light + Dark) collide
+	 * when loaded together, and a collision fails the build. Pick ONE theme
+	 * variant per brand here, plus any non-theme support sets (Components,
+	 * Viewport, etc.).
 	 *
-	 * The first brand builds to `dist/`; further brands build to `dist/<brand>/`.
-	 *
-	 * Leave empty → use all split files (Style Dictionary warns on collisions).
+	 * A brand without an entry uses all split files.
 	 */
 	brandSets: {},
 }
@@ -726,7 +762,7 @@ EOF
 }
 
 add_design_tokens_sample() {
-	log_info "Adding sample primitive tokens (Tokens Studio format)..."
+	log_info "Adding sample primitive tokens (DTCG format)..."
 	cd "$TARGET_FOLDER/packages/design-tokens" || exit
 
 	mkdir -p tokens
@@ -738,109 +774,109 @@ add_design_tokens_sample() {
   "Primitives": {
     "color": {
       "primary": {
-        "50":  { "value": "#eff6ff", "type": "color" },
-        "100": { "value": "#dbeafe", "type": "color" },
-        "200": { "value": "#bfdbfe", "type": "color" },
-        "300": { "value": "#93c5fd", "type": "color" },
-        "400": { "value": "#60a5fa", "type": "color" },
-        "500": { "value": "#3b82f6", "type": "color" },
-        "600": { "value": "#2563eb", "type": "color" },
-        "700": { "value": "#1d4ed8", "type": "color" },
-        "800": { "value": "#1e40af", "type": "color" },
-        "900": { "value": "#1e3a8a", "type": "color" },
-        "950": { "value": "#172554", "type": "color" }
+        "50":  { "$value": "#eff6ff", "$type": "color" },
+        "100": { "$value": "#dbeafe", "$type": "color" },
+        "200": { "$value": "#bfdbfe", "$type": "color" },
+        "300": { "$value": "#93c5fd", "$type": "color" },
+        "400": { "$value": "#60a5fa", "$type": "color" },
+        "500": { "$value": "#3b82f6", "$type": "color" },
+        "600": { "$value": "#2563eb", "$type": "color" },
+        "700": { "$value": "#1d4ed8", "$type": "color" },
+        "800": { "$value": "#1e40af", "$type": "color" },
+        "900": { "$value": "#1e3a8a", "$type": "color" },
+        "950": { "$value": "#172554", "$type": "color" }
       },
       "neutral": {
-        "50":  { "value": "#fafafa", "type": "color" },
-        "100": { "value": "#f4f4f5", "type": "color" },
-        "200": { "value": "#e4e4e7", "type": "color" },
-        "300": { "value": "#d4d4d8", "type": "color" },
-        "400": { "value": "#a1a1aa", "type": "color" },
-        "500": { "value": "#71717a", "type": "color" },
-        "600": { "value": "#52525b", "type": "color" },
-        "700": { "value": "#3f3f46", "type": "color" },
-        "800": { "value": "#27272a", "type": "color" },
-        "900": { "value": "#18181b", "type": "color" },
-        "950": { "value": "#09090b", "type": "color" }
+        "50":  { "$value": "#fafafa", "$type": "color" },
+        "100": { "$value": "#f4f4f5", "$type": "color" },
+        "200": { "$value": "#e4e4e7", "$type": "color" },
+        "300": { "$value": "#d4d4d8", "$type": "color" },
+        "400": { "$value": "#a1a1aa", "$type": "color" },
+        "500": { "$value": "#71717a", "$type": "color" },
+        "600": { "$value": "#52525b", "$type": "color" },
+        "700": { "$value": "#3f3f46", "$type": "color" },
+        "800": { "$value": "#27272a", "$type": "color" },
+        "900": { "$value": "#18181b", "$type": "color" },
+        "950": { "$value": "#09090b", "$type": "color" }
       }
     },
     "spacing": {
-      "0":   { "value": "0",         "type": "dimension" },
-      "px":  { "value": "1px",       "type": "dimension" },
-      "0-5": { "value": "0.125rem",  "type": "dimension" },
-      "1":   { "value": "0.25rem",   "type": "dimension" },
-      "1-5": { "value": "0.375rem",  "type": "dimension" },
-      "2":   { "value": "0.5rem",    "type": "dimension" },
-      "2-5": { "value": "0.625rem",  "type": "dimension" },
-      "3":   { "value": "0.75rem",   "type": "dimension" },
-      "3-5": { "value": "0.875rem",  "type": "dimension" },
-      "4":   { "value": "1rem",      "type": "dimension" },
-      "5":   { "value": "1.25rem",   "type": "dimension" },
-      "6":   { "value": "1.5rem",    "type": "dimension" },
-      "7":   { "value": "1.75rem",   "type": "dimension" },
-      "8":   { "value": "2rem",      "type": "dimension" },
-      "9":   { "value": "2.25rem",   "type": "dimension" },
-      "10":  { "value": "2.5rem",    "type": "dimension" },
-      "12":  { "value": "3rem",      "type": "dimension" },
-      "14":  { "value": "3.5rem",    "type": "dimension" },
-      "16":  { "value": "4rem",      "type": "dimension" },
-      "20":  { "value": "5rem",      "type": "dimension" },
-      "24":  { "value": "6rem",      "type": "dimension" },
-      "32":  { "value": "8rem",      "type": "dimension" }
+      "0":   { "$value": "0",         "type": "dimension" },
+      "px":  { "$value": "1px",       "type": "dimension" },
+      "0-5": { "$value": "0.125rem",  "type": "dimension" },
+      "1":   { "$value": "0.25rem",   "type": "dimension" },
+      "1-5": { "$value": "0.375rem",  "type": "dimension" },
+      "2":   { "$value": "0.5rem",    "type": "dimension" },
+      "2-5": { "$value": "0.625rem",  "type": "dimension" },
+      "3":   { "$value": "0.75rem",   "type": "dimension" },
+      "3-5": { "$value": "0.875rem",  "type": "dimension" },
+      "4":   { "$value": "1rem",      "type": "dimension" },
+      "5":   { "$value": "1.25rem",   "type": "dimension" },
+      "6":   { "$value": "1.5rem",    "type": "dimension" },
+      "7":   { "$value": "1.75rem",   "type": "dimension" },
+      "8":   { "$value": "2rem",      "type": "dimension" },
+      "9":   { "$value": "2.25rem",   "type": "dimension" },
+      "10":  { "$value": "2.5rem",    "type": "dimension" },
+      "12":  { "$value": "3rem",      "type": "dimension" },
+      "14":  { "$value": "3.5rem",    "type": "dimension" },
+      "16":  { "$value": "4rem",      "type": "dimension" },
+      "20":  { "$value": "5rem",      "type": "dimension" },
+      "24":  { "$value": "6rem",      "type": "dimension" },
+      "32":  { "$value": "8rem",      "type": "dimension" }
     },
     "typography": {
       "font-family": {
-        "sans": { "value": ["Inter", "system-ui", "sans-serif"],     "type": "fontFamily" },
-        "mono": { "value": ["JetBrains Mono", "Menlo", "monospace"], "type": "fontFamily" }
+        "sans": { "$value": ["Inter", "system-ui", "sans-serif"],     "type": "fontFamily" },
+        "mono": { "$value": ["JetBrains Mono", "Menlo", "monospace"], "$type": "fontFamily" }
       },
       "font-size": {
-        "xs":   { "value": "0.75rem",  "type": "dimension" },
-        "sm":   { "value": "0.875rem", "type": "dimension" },
-        "base": { "value": "1rem",     "type": "dimension" },
-        "lg":   { "value": "1.125rem", "type": "dimension" },
-        "xl":   { "value": "1.25rem",  "type": "dimension" },
-        "2xl":  { "value": "1.5rem",   "type": "dimension" },
-        "3xl":  { "value": "1.875rem", "type": "dimension" },
-        "4xl":  { "value": "2.25rem",  "type": "dimension" }
+        "xs":   { "$value": "0.75rem",  "type": "dimension" },
+        "sm":   { "$value": "0.875rem", "$type": "dimension" },
+        "base": { "$value": "1rem",     "type": "dimension" },
+        "lg":   { "$value": "1.125rem", "$type": "dimension" },
+        "xl":   { "$value": "1.25rem",  "type": "dimension" },
+        "2xl":  { "$value": "1.5rem",   "type": "dimension" },
+        "3xl":  { "$value": "1.875rem", "$type": "dimension" },
+        "4xl":  { "$value": "2.25rem",  "type": "dimension" }
       },
       "font-weight": {
-        "normal":   { "value": "400", "type": "fontWeight" },
-        "medium":   { "value": "500", "type": "fontWeight" },
-        "semibold": { "value": "600", "type": "fontWeight" },
-        "bold":     { "value": "700", "type": "fontWeight" }
+        "normal":   { "$value": "400", "$type": "fontWeight" },
+        "medium":   { "$value": "500", "$type": "fontWeight" },
+        "semibold": { "$value": "600", "$type": "fontWeight" },
+        "bold":     { "$value": "700", "$type": "fontWeight" }
       },
       "line-height": {
-        "none":    { "value": "1",     "type": "number" },
-        "tight":   { "value": "1.25",  "type": "number" },
-        "snug":    { "value": "1.375", "type": "number" },
-        "normal":  { "value": "1.5",   "type": "number" },
-        "relaxed": { "value": "1.625", "type": "number" },
-        "loose":   { "value": "2",     "type": "number" }
+        "none":    { "$value": "1",     "type": "number" },
+        "tight":   { "$value": "1.25",  "type": "number" },
+        "snug":    { "$value": "1.375", "$type": "number" },
+        "normal":  { "$value": "1.5",   "type": "number" },
+        "relaxed": { "$value": "1.625", "$type": "number" },
+        "loose":   { "$value": "2",     "type": "number" }
       }
     },
     "semantic": {
       "background": {
-        "default": { "value": "{color.neutral.50}",  "type": "color" },
-        "muted":   { "value": "{color.neutral.100}", "type": "color" },
-        "subtle":  { "value": "{color.neutral.200}", "type": "color" },
-        "inverse": { "value": "{color.neutral.900}", "type": "color" }
+        "default": { "$value": "{color.neutral.50}",  "type": "color" },
+        "muted":   { "$value": "{color.neutral.100}", "$type": "color" },
+        "subtle":  { "$value": "{color.neutral.200}", "$type": "color" },
+        "inverse": { "$value": "{color.neutral.900}", "$type": "color" }
       },
       "foreground": {
-        "default": { "value": "{color.neutral.900}", "type": "color" },
-        "muted":   { "value": "{color.neutral.600}", "type": "color" },
-        "subtle":  { "value": "{color.neutral.400}", "type": "color" },
-        "inverse": { "value": "{color.neutral.50}",  "type": "color" }
+        "default": { "$value": "{color.neutral.900}", "$type": "color" },
+        "muted":   { "$value": "{color.neutral.600}", "$type": "color" },
+        "subtle":  { "$value": "{color.neutral.400}", "$type": "color" },
+        "inverse": { "$value": "{color.neutral.50}",  "type": "color" }
       },
       "border": {
-        "default": { "value": "{color.neutral.200}", "type": "color" },
-        "muted":   { "value": "{color.neutral.100}", "type": "color" },
-        "strong":  { "value": "{color.neutral.300}", "type": "color" }
+        "default": { "$value": "{color.neutral.200}", "$type": "color" },
+        "muted":   { "$value": "{color.neutral.100}", "$type": "color" },
+        "strong":  { "$value": "{color.neutral.300}", "$type": "color" }
       },
       "accent": {
-        "default": { "value": "{color.primary.500}", "type": "color" },
-        "hover":   { "value": "{color.primary.600}", "type": "color" },
-        "active":  { "value": "{color.primary.700}", "type": "color" },
-        "muted":   { "value": "{color.primary.100}", "type": "color" }
+        "default": { "$value": "{color.primary.500}", "$type": "color" },
+        "hover":   { "$value": "{color.primary.600}", "$type": "color" },
+        "active":  { "$value": "{color.primary.700}", "$type": "color" },
+        "muted":   { "$value": "{color.primary.100}", "$type": "color" }
       }
     }
   }
@@ -899,12 +935,12 @@ The pipeline uses the [`@tokens-studio/sd-transforms`](https://github.com/tokens
 design-tokens/
 ├── lib/                              # Build engine (modular ESM)
 │   ├── buildBrands.mjs               # Brand × platform orchestrator
-│   ├── configManager.mjs             # Loads and validates token-config.js
+│   ├── configManager.mjs             # Loads token-config.js over defaults
 │   ├── platformConfigs.mjs           # Per-platform Style Dictionary factories
 │   └── registerTransforms.mjs        # Tokens Studio preprocessor + custom formats
 ├── scripts/                          # CLI entry points
 │   ├── build-style-dictionary.mjs    # Main build (split + per-brand SD run)
-│   └── split-design-tokens.mjs       # Standalone splitter (also runnable)
+│   └── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
 ├── temp/                             # Per-set intermediate files (gitignored)
@@ -923,9 +959,9 @@ Edit `token-config.js`:
 | `brands`      | `string[]`                 | One bundle per brand. The first brand → `dist/` (the `css` and `tailwind-theme` exports). Further brands → `dist/<brand>/`.                     |
 | `platforms`   | `string[]`                 | Output formats. Known keys: `tailwind-css`, `css-vars`, `js`.                                                                                      |
 | `inputFiles`  | `string[]`                 | Source JSON files (relative to `tokens/` or absolute). Read & merged in order.                                                                     |
-| `excludeKeys` | `string[]`                 | Top-level keys to drop before splitting (e.g. `$themes`, `$metadata`, `global`). Mutually exclusive with `includeKeys`.                            |
+| `excludeKeys` | `string[]`                 | Top-level sets to drop before splitting (e.g. `global`). `$`-prefixed metadata is always dropped. Mutually exclusive with `includeKeys`.         |
 | `includeKeys` | `string[]`                 | If non-empty, ONLY these top-level keys are split.                                                                                                 |
-| `brandSets`   | `Record<string, string[]>` | Per-brand selection of split-file basenames (without `.json`). Slashes in set names become underscores. Empty → use all (may collide on duplicates). Unknown names fail the build. |
+| `brandSets`   | `Record<string, string[]>` | Per-brand selection of split-file basenames (without `.json`). Slashes in set names become underscores. No entry → use all. Unknown names and set collisions fail the build. |
 
 ### Available platforms
 
@@ -981,18 +1017,19 @@ pnpm clean
 
 | Flag            | Effect                                                            |
 | --------------- | ----------------------------------------------------------------- |
-| `--source=PATH` | Override `inputFiles[0]` with this absolute or cwd-relative path. |
+| `--source=PATH` | Override `inputFiles[0]` with this absolute or cwd-relative path. Needs the `=`. |
 | `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). |
+| `--verbose`     | Verbose Style Dictionary logging, e.g. to name broken references. |
 
 ## Tokens Studio integration
 
-The build expects the native Tokens Studio JSON shape (flat keys with `value` / `type`, references like `{color.neutral.50}`), not strict W3C DTCG `$value` / `$type`. Drop the export at `tokens/<your-export>.json` and add the filename to `inputFiles` in `token-config.js`.
+Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and add the filename to `inputFiles` in `token-config.js`.
 
 ### Adding a new brand
 
 1. Append the brand name to `brands` in `token-config.js`.
 2. Optionally add a `brandSets[<brand>]` entry listing the set basenames to include (e.g. `Theme_Brand Light`, `Primitives`, `Components_Mode`).
-3. Run `pnpm build`. The first brand stays at `dist/`; each further brand emits to `dist/<brand>/` and imports as `@repo/design-tokens/<brand>/tokens.css`.
+3. Run `pnpm build`. The first brand stays at `dist/`; each further brand emits to `dist/<brand>/` and imports as `@repo/design-tokens/<brand>/tailwind-theme.css` (and `<brand>/tokens.css` with `css-vars`).
 
 ### Adding a new platform
 
