@@ -43,7 +43,6 @@ create_design_tokens_package() {
 			devDependencies: {
 				"@repo/typescript-config": "workspace:*",
 				"@tokens-studio/sd-transforms": "catalog:",
-				"onchange": "catalog:",
 				"style-dictionary": "catalog:",
 				"typescript": "catalog:"
 			}
@@ -377,7 +376,7 @@ EOF
  * Dictionary build.
  */
 
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -433,7 +432,8 @@ const toCanonical = (target) => {
 /** @returns {boolean} Whether `child` is `parent` or inside it. */
 const isInside = (child, parent) => {
 	const relative = path.relative(parent, child)
-	return !relative.startsWith('..') && !path.isAbsolute(relative)
+	// `..` alone or followed by a separator leaves `parent`; `..tokens` does not.
+	return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
 }
 
 class ConfigManager {
@@ -494,15 +494,21 @@ class ConfigManager {
 	}
 
 	/**
-	 * The build replaces buildPathPrefix and deletes the *.json files in
-	 * tempDir, so neither may hold the package, its build engine, or any
+	 * The build replaces buildPathPrefix and deletes the *.json files,
+	 * `dist-staging/` and `.build-lock/` in tempDir, so neither may hold the package, its build engine, or any
 	 * source file. Paths are compared canonically (symlinks, and case on
 	 * case-insensitive file systems such as macOS).
 	 * @returns {void}
 	 */
 	validatePaths() {
+		// Create both folders first, so toCanonical sees their real letter case.
+		mkdirSync(this.config.buildPathPrefix, { recursive: true })
+		mkdirSync(this.config.tempDir, { recursive: true })
 		const buildPathPrefix = toCanonical(this.config.buildPathPrefix)
 		const tempDir = toCanonical(this.config.tempDir)
+		if (/[{}]/.test(path.relative(PACKAGE_ROOT, tempDir))) {
+			throw new Error(`tempDir must not be inside a folder whose name has "{" or "}": Style Dictionary reads them as references (${tempDir}).`)
+		}
 		if (isInside(tempDir, buildPathPrefix)) {
 			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
 		}
@@ -579,8 +585,8 @@ EOF
 /**
  * @fileoverview
  * One build or split at a time per package: they share `temp/` and `dist/`,
- * and the last to finish would win. `pnpm build:watch` (onchange) queues its
- * own runs; this lock makes any other overlap fail with a message.
+ * and the last to finish would win. `pnpm build:watch` runs one build at a
+ * time; this lock makes any other overlap fail with a message.
  */
 
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -787,7 +793,8 @@ async function buildBrands(brands, options) {
 				// Style Dictionary reads `source` entries as globs (escape `[Brand] A`)
 				// and keeps the path on each token, where a `{…}` folder name would be
 				// read as a token reference. The build runs from the package folder,
-				// so relative paths leave out the folders above it.
+				// so relative paths leave out the folders above it; validatePaths()
+				// rejects a tempDir outside the package under a `{…}` folder.
 				source: sourceFiles.map((file) =>
 					path.relative(process.cwd(), file).split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&'),
 				),
@@ -950,6 +957,11 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		if (/[{}]/.test(key)) {
 			throw new Error(`Set "${key}": "{" and "}" are not allowed in set names, because Style Dictionary reads them as references. Rename the set in Tokens Studio.`)
 		}
+		// The set name becomes a file name: refuse what Windows cannot store or
+		// what would leave the temp folder (`..\package`).
+		if (/[\\<>:"|?*\u0000-\u001f]/.test(key) || /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(key.replace(/\//g, '_'))) {
+			throw new Error(`Set "${key}" cannot be a file name on every system. Avoid \\ < > : " | ? * and names such as CON or NUL; rename the set in Tokens Studio.`)
+		}
 		const filename = `${key.replace(/\//g, '_')}.json`
 		// Lower case: macOS and Windows file systems treat Core.json and core.json as one file.
 		const fileKey = filename.toLowerCase()
@@ -1010,30 +1022,28 @@ EOF
 	cat >scripts/watch.mjs <<'EOF'
 /**
  * @fileoverview
- * `pnpm build:watch`: runs `pnpm build` once, then again on each change to
- * the configured input files, `token-config.js`, `lib/` or `scripts/`.
- * onchange runs one build at a time and queues one run per change event, so
- * the last run sees the latest files. The watch list and the excludes are
+ * `pnpm build:watch`: runs `pnpm build` once, then again when one of the
+ * configured input files, `token-config.js` or a `.mjs` file in `lib/` or
+ * `scripts/` changes. One build runs at a time; changes during a build queue
+ * one more build, so the last build sees the latest files. The watch list is
  * read once at start: restart after changing `inputFiles`, a path key, or
  * adding a file to `lib/` or `scripts/`.
  *
- * Uses onchange's API in this process: no shell quoting, no `onchange`
- * binary, and no child watcher left behind when this process is killed.
- * `defaultExclude: false`: onchange otherwise ignores `node_modules/`, which
- * would hide an input file read from a workspace package. It watches
- * single files: chokidar treats a folder path with `[` or `{` as a glob and
- * then misses its children, while a file path still works.
+ * Uses `fs.watch` on the folder of each file and filters by file name. There
+ * is no glob handling, so `[`, `{` or `node_modules/` in a path are safe, and
+ * atomic saves (write a temp file, then rename it) are seen.
  */
 
-import { readdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { readdirSync, watch } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-import { onchange } from 'onchange'
 
 import ConfigManager from '../lib/configManager.mjs'
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+/** Editors write a file in several steps: wait this long for them to settle. */
+const SETTLE_MS = 100
 
 const configManager = new ConfigManager()
 try {
@@ -1047,20 +1057,61 @@ try {
 const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
 	readdirSync(path.join(PACKAGE_ROOT, dir))
 		.filter((file) => file.endsWith('.mjs'))
-		.map((file) => path.join(dir, file)),
+		.map((file) => path.join(PACKAGE_ROOT, dir, file)),
 )
-const matches = [...configManager.getInputFilePaths(), 'token-config.js', ...engineFiles]
-onchange({
-	cwd: PACKAGE_ROOT,
-	matches,
-	// Only explicit files are watched, and validatePaths() keeps them out of
-	// tempDir and buildPathPrefix, so no exclude is needed.
-	defaultExclude: false,
-	initial: true,
-	command: ['pnpm', 'build'],
-	// onchange only logs watcher errors (e.g. ENOSPC) in verbose mode: show what is watched.
-	onReady: () => console.log(`[design-tokens] watching ${matches.length} file(s): ${matches.join(', ')}`),
-})
+const files = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles]
+
+let isBuilding = false
+let isQueued = false
+let settleTimer
+
+function build() {
+	if (isBuilding) {
+		isQueued = true
+		return
+	}
+	isBuilding = true
+	// `shell` on Windows so `pnpm.cmd` resolves; the arguments are fixed.
+	const child = spawn('pnpm', ['build'], { cwd: PACKAGE_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
+	child.on('error', (error) => {
+		console.error(`[design-tokens] could not start pnpm build: ${error.message}`)
+		process.exit(1)
+	})
+	child.on('exit', () => {
+		isBuilding = false
+		if (!isQueued) return
+		isQueued = false
+		build()
+	})
+}
+
+const namesByFolder = new Map()
+for (const file of files) {
+	const folder = path.dirname(file)
+	if (!namesByFolder.has(folder)) namesByFolder.set(folder, new Set())
+	namesByFolder.get(folder).add(path.basename(file))
+}
+for (const [folder, names] of namesByFolder) {
+	let watcher
+	try {
+		// A null name (some platforms) may be any file in the folder: rebuild.
+		watcher = watch(folder, (_eventType, name) => {
+			if (name !== null && !names.has(name)) return
+			clearTimeout(settleTimer)
+			settleTimer = setTimeout(build, SETTLE_MS)
+		})
+	} catch (error) {
+		console.error(`[design-tokens] cannot watch ${folder}: ${error.message}`)
+		process.exit(1)
+	}
+	watcher.on('error', (error) => {
+		console.error(`[design-tokens] watching ${folder} failed: ${error.message}`)
+		process.exit(1)
+	})
+}
+
+console.log(`[design-tokens] watching ${files.length} file(s): ${files.join(', ')}`)
+build()
 EOF
 
 	cat >scripts/build-style-dictionary.mjs <<'EOF'
@@ -1078,8 +1129,8 @@ EOF
  *      build leaves the previous `dist/` in place.
  *
  * One build at a time: `temp/.build-lock` (lib/buildLock.mjs) makes an
- * overlapping build or split fail. `pnpm build:watch` (onchange) runs one
- * build at a time, so the last run sees the latest files.
+ * overlapping build or split fail. `pnpm build:watch` runs one build at a
+ * time, so the last run sees the latest files.
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
@@ -1465,7 +1516,7 @@ design-tokens/
 ├── scripts/                          # CLI entry points
 │   ├── build-style-dictionary.mjs    # Main build (split + per-brand SD run)
 │   ├── split-design-tokens.mjs       # Splitter (`pnpm split-tokens`)
-│   └── watch.mjs                     # `pnpm build:watch` (onchange API, watch list from token-config.js)
+│   └── watch.mjs                     # `pnpm build:watch` (fs.watch, watch list from token-config.js)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
 ├── temp/                             # Per-set intermediate files (package .gitignore)
