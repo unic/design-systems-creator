@@ -6,7 +6,7 @@
 # Generates the design tokens build pipeline and sample into a temp folder,
 # builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
 # CSS output (including every variable the Storybook stories use), builds two
-# brands, and checks that colliding themes, mixed formats, sets or brands that
+# brands and from the repo root, and checks that colliding themes, mixed formats, sets or brands that
 # differ only in case, values without a CSS form, unsafe build paths or brand
 # names and an overlapping build fail, and that a stale lock is taken over
 # and released. Runs in a folder named `[ds] {work}` to cover glob and reference characters.
@@ -154,6 +154,9 @@ expect_build_failure "mixed formats in one export" "mixes DTCG \$value/\$type an
 set_inputs "'braces.json'"
 expect_build_failure "braces in a set name" "are not allowed in set names"
 
+set_inputs "'colon.json'"
+expect_build_failure "set name that is not a file name everywhere" "cannot be a file name on every system"
+
 set_inputs "'case.json'"
 expect_build_failure "sets that differ only in case" "both map to"
 
@@ -164,6 +167,10 @@ set_inputs "'primitive-design-tokens.json'"
 sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: 'lib',|" "$PACKAGE_DIR/token-config.js"
 expect_build_failure "build path over lib/" "buildPathPrefix must not be or hold the package folder"
 sed -i.bak "s|brandSets: {}, buildPathPrefix: 'lib',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
+
+sed -i.bak "s|brandSets: {},|brandSets: {}, sourcePathPrefix: 'dist/..tokens',|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "sources in a folder named ..tokens inside dist/" "must not be or hold the package folder"
+sed -i.bak "s|brandSets: {}, sourcePathPrefix: 'dist/..tokens',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
 
 sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: 'temp/dist-staging',|" "$PACKAGE_DIR/token-config.js"
 expect_build_failure "build path inside tempDir" "buildPathPrefix must not be inside tempDir"
