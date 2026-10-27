@@ -181,14 +181,23 @@ sed -i.bak "s|brands: \['a', '../../tokens'\],|brands: ['a', 'Acme', 'acme'],|" 
 expect_build_failure "brands that differ only in case" "differ only in case"
 sed -i.bak "s|brands: \['a', 'Acme', 'acme'\],|brands: ['brandName'],|" "$PACKAGE_DIR/token-config.js"
 
+if (cd "$PACKAGE_DIR" && node scripts/watch.mjs --source=tokens/legacy.json >/dev/null 2>&1); then
+	echo "FAIL  build:watch should refuse flags"
+	FAILURES=$((FAILURES + 1))
+else
+	echo "ok    build:watch refuses flags"
+fi
+
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
 echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"
 expect_build_failure "overlapping build" "Another build (pid $$)"
-if (cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs >/dev/null 2>&1); then :; else
-	if [[ $? -eq 75 ]]; then echo "ok    a busy lock exits with 75"; else
-		echo "FAIL  a busy lock should exit with 75"
-		FAILURES=$((FAILURES + 1))
-	fi
+BUSY_CODE=0
+(cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs >/dev/null 2>&1) || BUSY_CODE=$?
+if [[ "$BUSY_CODE" -eq 75 ]]; then
+	echo "ok    a busy lock exits with 75"
+else
+	echo "FAIL  a busy lock should exit with 75, got $BUSY_CODE"
+	FAILURES=$((FAILURES + 1))
 fi
 
 sleep 0 &
