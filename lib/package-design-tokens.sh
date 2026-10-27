@@ -551,6 +551,7 @@ class ConfigManager {
 		const brandByFolder = new Map()
 		for (const brand of brands) {
 			const folder = brand.toLowerCase()
+			if (brandByFolder.get(folder) === brand) throw new Error(`Brand "${brand}" is listed twice.`)
 			if (brandByFolder.has(folder)) {
 				throw new Error(`Brands "${brandByFolder.get(folder)}" and "${brand}" differ only in case: on macOS and Windows they write to one folder.`)
 			}
@@ -643,10 +644,11 @@ const busyError = (lockDir, pid) =>
 function takeOverStaleLock(lockDir) {
 	const guardDir = `${lockDir}.recover`
 	const pidFile = path.join(lockDir, 'pid')
+	const recoveringError = new Error(`Another build is taking over a stale lock in ${lockDir}. Run the build again.`)
 	if (!tryCreate(guardDir)) {
-		if (ageOf(guardDir) < STARTUP_GRACE_MS) throw busyError(lockDir, readPid(pidFile))
+		if (ageOf(guardDir) < STARTUP_GRACE_MS) throw recoveringError
 		rmSync(guardDir, { recursive: true, force: true })
-		if (!tryCreate(guardDir)) throw busyError(lockDir, readPid(pidFile))
+		if (!tryCreate(guardDir)) throw recoveringError
 	}
 	try {
 		if (tryCreate(lockDir)) return
@@ -1002,14 +1004,17 @@ EOF
  * `pnpm build:watch`: runs `pnpm build` once, then again on each change to
  * the configured input files, `token-config.js`, `lib/` or `scripts/`.
  * onchange runs one build at a time and queues one run per change event, so
- * the last run sees the latest files. The watch list and the excludes come
- * from `token-config.js`: restart after changing its path keys.
+ * the last run sees the latest files. The watch list and the excludes are
+ * read once at start: restart after changing `inputFiles`, a path key, or
+ * adding a file to `lib/` or `scripts/`.
  *
  * Uses onchange's API in this process: no shell quoting, no PATH lookup,
- * and no child watcher left behind when this process is killed. Paths are
- * plain files and folders, not globs, so `(` or `[` in a path is safe.
+ * and no child watcher left behind when this process is killed. It watches
+ * single files: chokidar treats a folder path with `[` or `{` as a glob and
+ * then misses its children, while a file path still works.
  */
 
+import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -1039,24 +1044,21 @@ const isUnder = (file, dir) => {
 	return !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
-const matches = [...configManager.getInputFilePaths(), 'token-config.js', 'lib', 'scripts']
+const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
+	readdirSync(path.join(PACKAGE_ROOT, dir))
+		.filter((file) => file.endsWith('.mjs'))
+		.map((file) => path.join(dir, file)),
+)
+const matches = [...configManager.getInputFilePaths(), 'token-config.js', ...engineFiles]
 onchange({
 	cwd: PACKAGE_ROOT,
 	matches,
-	// The build writes tempDir and buildPathPrefix. In lib/ and scripts/ only
-	// .mjs files and folders count: dotfiles (.DS_Store) and other extensions
-	// (.swp, .md) do not start a build.
-	exclude: [
-		(file) =>
-			isUnder(file, tempDir) ||
-			isUnder(file, buildPathPrefix) ||
-			((isUnder(file, 'lib') || isUnder(file, 'scripts')) &&
-				(path.basename(file).startsWith('.') || (path.extname(file) !== '' && path.extname(file) !== '.mjs'))),
-	],
+	// The build writes tempDir and buildPathPrefix: watching them would rebuild forever.
+	exclude: [(file) => isUnder(file, tempDir) || isUnder(file, buildPathPrefix)],
 	initial: true,
 	command: ['pnpm', 'build'],
 	// onchange only logs watcher errors (e.g. ENOSPC) in verbose mode: show what is watched.
-	onReady: () => console.log(`[design-tokens] watching ${matches.length} path(s): ${matches.join(', ')}`),
+	onReady: () => console.log(`[design-tokens] watching ${matches.length} file(s): ${matches.join(', ')}`),
 })
 EOF
 
@@ -1202,8 +1204,9 @@ EOF
  * `lib/platformConfigs.mjs`, register it in `PLATFORM_FACTORIES` and add its
  * key to `platforms`. Path keys (`sourcePathPrefix`, `buildPathPrefix`,
  * `tempDir`) default to `tokens/`, `dist/` and `temp/` and resolve against
- * the package folder; `pnpm clean` only removes the defaults. `tempDir` must not be
- * inside `buildPathPrefix`. The build deletes and recreates `buildPathPrefix`
+ * the package folder; `pnpm clean` only removes the defaults. `tempDir` and
+ * `buildPathPrefix` must not be inside each other or hold package files or
+ * token sources. The build deletes and recreates `buildPathPrefix`
  * on every run, so point it only at a folder the build owns. The package
  * `exports` assume `dist/`; update them if you move it.
  */
@@ -1519,7 +1522,7 @@ import { colorPrimary500 } from "@repo/design-tokens";
 # Full pipeline: split + per-brand Style Dictionary build
 pnpm build
 
-# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (one build at a time; restart after changing path keys in token-config.js)
+# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (one build at a time; restart after changing inputFiles or a path key in token-config.js)
 pnpm build:watch
 
 # Run just the splitter (debugging)
@@ -1540,6 +1543,10 @@ pnpm clean
 ## Tokens Studio integration
 
 Tokens are nested groups whose leaves carry W3C DTCG `$value` / `$type` (the sample) or the legacy Tokens Studio `value` / `type`, with references like `{color.neutral.50}`. Drop the export at `tokens/<your-export>.json` and replace `primitive-design-tokens.json` in `inputFiles` with its filename. You can then delete the sample, but the generated Storybook stories use its variables (`--color-primary-*`, `--color-neutral-*`, `--semantic-*`, `--spacing-4`, `--typography-font-family-sans`): rename them in the stories or keep tokens with those paths. Each input file needs the `$metadata` of a single-file export, and all `inputFiles` must use one format: a mix, also inside one file, fails the build. As in Tokens Studio, a line height or letter spacing without a unit is in pixels (`"24"` → `24px`), also when it comes from math (`{number.base} * 1.5`) or through an alias. A line height stays relative only when its source value, directly, at the end of an alias chain or through a typography or composition token, is a percentage (`150%`) or a JSON number (`"$value": 1.5`, e.g. an alias to the sample's `number` tokens `typography.line-height.*`). Legacy exports store numbers as strings (`"value": "1.5"`), which count as pixels. Math on a percentage line height (`{lineHeights.body} * 1.2`) gives pixels, so avoid it. In a composition, give `boxShadow` as a reference to a shadow token: an inline shadow object loses its `x` and `y`.
+
+### Turborepo cache
+
+Turbo hashes the files of this package. If `inputFiles` or `sourcePathPrefix` point outside it, add those files to `inputs` for `@repo/design-tokens#build` in `turbo.json`, or a cache hit replays old CSS.
 
 ### Adding a new brand
 
