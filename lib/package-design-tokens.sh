@@ -553,7 +553,7 @@ class ConfigManager {
 			const folder = brand.toLowerCase()
 			if (brandByFolder.get(folder) === brand) throw new Error(`Brand "${brand}" is listed twice.`)
 			if (brandByFolder.has(folder)) {
-				throw new Error(`Brands "${brandByFolder.get(folder)}" and "${brand}" differ only in case: on macOS and Windows they write to one folder.`)
+				throw new Error(`Brands "${brandByFolder.get(folder)}" and "${brand}" differ only in case. Further brands build to folders named after them, and macOS and Windows treat those names as one folder.`)
 			}
 			brandByFolder.set(folder, brand)
 		}
@@ -757,7 +757,7 @@ function resolveSourceFiles(brand, options) {
 
 	const missing = subset.filter((name) => !available.includes(`${name}.json`))
 	if (missing.length > 0) {
-		throw new Error(`brandSets[${brand}] lists unknown or empty set(s): ${missing.join(', ')}. The splitter skips empty sets, so remove them from brandSets. Available: ${available.map((file) => path.basename(file, '.json')).join(', ')}`)
+		throw new Error(`brandSets[${brand}] lists unknown, empty or filtered set(s): ${missing.join(', ')}. The splitter skips empty sets and sets removed by includeKeys/excludeKeys. Available: ${available.map((file) => path.basename(file, '.json')).join(', ')}`)
 	}
 	return subset.map((name) => path.join(options.tempDir, `${name}.json`))
 }
@@ -786,7 +786,8 @@ async function buildBrands(brands, options) {
 			{
 				// Style Dictionary reads `source` entries as globs (escape `[Brand] A`)
 				// and keeps the path on each token, where a `{…}` folder name would be
-				// read as a token reference: pass paths relative to the working folder.
+				// read as a token reference. The build runs from the package folder,
+				// so relative paths leave out the folders above it.
 				source: sourceFiles.map((file) =>
 					path.relative(process.cwd(), file).split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&'),
 				),
@@ -946,6 +947,9 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		if (setValue && typeof setValue === 'object' && ('$value' in setValue || ('value' in setValue && typeof setValue.type === 'string'))) {
 			throw new Error(`"${key}" is a token, not a set. inputFiles must be single-file Tokens Studio exports, not set files from a multi-file sync.`)
 		}
+		if (/[{}]/.test(key)) {
+			throw new Error(`Set "${key}": "{" and "}" are not allowed in set names, because Style Dictionary reads them as references. Rename the set in Tokens Studio.`)
+		}
 		const filename = `${key.replace(/\//g, '_')}.json`
 		// Lower case: macOS and Windows file systems treat Core.json and core.json as one file.
 		const fileKey = filename.toLowerCase()
@@ -1013,8 +1017,10 @@ EOF
  * read once at start: restart after changing `inputFiles`, a path key, or
  * adding a file to `lib/` or `scripts/`.
  *
- * Uses onchange's API in this process: no shell quoting, no PATH lookup,
- * and no child watcher left behind when this process is killed. It watches
+ * Uses onchange's API in this process: no shell quoting, no `onchange`
+ * binary, and no child watcher left behind when this process is killed.
+ * `defaultExclude: false`: onchange otherwise ignores `node_modules/`, which
+ * would hide an input file read from a workspace package. It watches
  * single files: chokidar treats a folder path with `[` or `{` as a glob and
  * then misses its children, while a file path still works.
  */
@@ -1038,17 +1044,6 @@ try {
 	process.exit(1)
 }
 
-const { tempDir, buildPathPrefix } = configManager.config
-/**
- * @param {string} file - Path relative to the package or absolute.
- * @param {string} dir - Path relative to the package or absolute.
- */
-const isUnder = (file, dir) => {
-	dir = path.resolve(PACKAGE_ROOT, dir)
-	const relative = path.relative(dir, path.resolve(PACKAGE_ROOT, file))
-	return !relative.startsWith('..') && !path.isAbsolute(relative)
-}
-
 const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
 	readdirSync(path.join(PACKAGE_ROOT, dir))
 		.filter((file) => file.endsWith('.mjs'))
@@ -1058,8 +1053,9 @@ const matches = [...configManager.getInputFilePaths(), 'token-config.js', ...eng
 onchange({
 	cwd: PACKAGE_ROOT,
 	matches,
-	// An input file inside tempDir or buildPathPrefix would be rewritten by every build.
-	exclude: [(file) => isUnder(file, tempDir) || isUnder(file, buildPathPrefix)],
+	// Only explicit files are watched, and validatePaths() keeps them out of
+	// tempDir and buildPathPrefix, so no exclude is needed.
+	defaultExclude: false,
 	initial: true,
 	command: ['pnpm', 'build'],
 	// onchange only logs watcher errors (e.g. ENOSPC) in verbose mode: show what is watched.
@@ -1093,12 +1089,15 @@ EOF
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import acquireBuildLock from '../lib/buildLock.mjs'
 import buildBrands from '../lib/buildBrands.mjs'
 import ConfigManager from '../lib/configManager.mjs'
 import registerTransforms from '../lib/registerTransforms.mjs'
 import splitDesignTokens from './split-design-tokens.mjs'
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 registerTransforms()
 
@@ -1146,6 +1145,8 @@ const exec = async (argv = []) => {
 	}
 
 	const { brands, platforms, buildPathPrefix, tempDir, brandSets } = brandPlatformConfig
+	// Style Dictionary sources are passed relative to this folder (see buildBrands.mjs).
+	process.chdir(PACKAGE_ROOT)
 
 	try {
 		acquireBuildLock(tempDir)
