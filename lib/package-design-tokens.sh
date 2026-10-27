@@ -585,9 +585,9 @@ EOF
 	cat >lib/buildLock.mjs <<'EOF'
 /**
  * @fileoverview
- * One build or split at a time per package: they share `temp/` and `dist/`,
- * and the last to finish would win. `pnpm build:watch` runs one build at a
- * time; this lock makes any other overlap fail with a message.
+ * One build or split at a time per package: they share `tempDir` and
+ * `buildPathPrefix`, and the last to finish would win. An overlapping build
+ * or split exits with LOCK_BUSY_EXIT_CODE; `pnpm build:watch` retries on it.
  */
 
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -751,7 +751,7 @@ const TYPES_MAP = {
 
 /**
  * Resolve the source files for a given brand. Honors `brandSets[brand]`;
- * falls back to all `*.json` in the temp dir.
+ * falls back to all `*.json` in `<tempDir>/sets/`.
  *
  * @param {string} brand
  * @param {BuildOptions} options
@@ -838,7 +838,8 @@ EOF
 /**
  * @fileoverview
  * Merges one or more Tokens Studio JSON exports and splits them into per-set
- * JSON files in `tempDir`. Each top-level key (other than `$`-prefixed
+ * JSON files in `outputDir` (`<tempDir>/sets/` when run through the build or
+ * `pnpm split-tokens`). Each top-level key (other than `$`-prefixed
  * Tokens Studio metadata and any user-excluded set) becomes one file holding
  * the set contents without the set-name wrapper. Slashes in the set name
  * become underscores (so `Theme/Brand Light` → `Theme_Brand Light.json`).
@@ -1037,7 +1038,9 @@ EOF
  * one more build, so the last build sees the latest files. The watch list is
  * read once at start: restart after changing `inputFiles`, a path key, or
  * adding a file to `lib/` or `scripts/`. When another build holds the lock,
- * the watcher retries until its build runs. On Linux, a watched folder that
+ * the watcher retries, backing off to 10 seconds, until its build runs.
+ * Symlinks on an input path (a token package in `node_modules/`) are watched
+ * too, so `pnpm update` rebuilds. On Linux, a watched folder that
  * is deleted and recreated (e.g. by `git checkout`) needs a restart.
  *
  * Uses `fs.watch` on the folder of each file and filters by file name. There
@@ -1046,7 +1049,7 @@ EOF
  */
 
 import { spawn } from 'node:child_process'
-import { readdirSync, realpathSync, watch } from 'node:fs'
+import { lstatSync, readdirSync, realpathSync, watch } from 'node:fs'
 import { constants } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1058,8 +1061,16 @@ const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const BUILD_SCRIPT = path.join(PACKAGE_ROOT, 'scripts', 'build-style-dictionary.mjs')
 /** Editors write a file in several steps: wait this long for them to settle. */
 const SETTLE_MS = 100
-/** Another build holds the lock: try again after this long. */
+/** Another build holds the lock: retry after this long, doubling up to the maximum. */
 const RETRY_MS = 1000
+const MAX_RETRY_MS = 10_000
+
+// The build's flags do not reach the watched builds: refuse them rather than
+// build a different source than the user asked for.
+if (process.argv.slice(2).some((arg) => arg !== '--')) {
+	console.error('[design-tokens] build:watch takes no flags. Set inputFiles in token-config.js instead of --source.')
+	process.exit(1)
+}
 
 const configManager = new ConfigManager()
 try {
@@ -1075,22 +1086,36 @@ const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
 		.filter((file) => file.endsWith('.mjs'))
 		.map((file) => path.join(PACKAGE_ROOT, dir, file)),
 )
+const configuredFiles = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles]
 // fs.watch reports the names on disk: resolve letter case and file symlinks
 // (an edit lands in the link target's folder). A missing file keeps its path.
-const files = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles].map((file) => {
+const files = configuredFiles.map((file) => {
 	try {
 		return realpathSync.native(file)
 	} catch {
 		return file
 	}
 })
+// A symlink on the configured path (e.g. `node_modules/@acme/tokens` after
+// `pnpm update`) can point somewhere new: watch it in its parent folder too.
+for (const file of configuredFiles) {
+	for (let link = path.dirname(file); link !== path.dirname(link); link = path.dirname(link)) {
+		try {
+			if (lstatSync(link).isSymbolicLink()) files.push(link)
+		} catch {}
+	}
+}
 
 let isBuilding = false
 let isQueued = false
 let settleTimer
+let retryTimer
+let retryMs = RETRY_MS
 let child
 
 function build() {
+	// One retry chain at most: a save during a pending retry builds now.
+	clearTimeout(retryTimer)
 	if (isBuilding) {
 		isQueued = true
 		return
@@ -1101,15 +1126,18 @@ function build() {
 		console.error(`[design-tokens] could not start the build: ${error.message}`)
 		process.exit(1)
 	})
-	child.on('exit', (code) => {
+	child.on('exit', (code, signal) => {
 		isBuilding = false
 		child = undefined
+		if (signal) console.error(`[design-tokens] the build was stopped by ${signal}.`)
 		// Another build (e.g. a manual `pnpm build`) holds the lock: this change
 		// is not built yet, so try again rather than wait for the next save.
 		if (code === LOCK_BUSY_EXIT_CODE) {
-			setTimeout(build, RETRY_MS)
+			retryTimer = setTimeout(build, retryMs)
+			retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)
 			return
 		}
+		retryMs = RETRY_MS
 		if (!isQueued) return
 		isQueued = false
 		build()
@@ -1174,7 +1202,7 @@ EOF
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
- *   --skip-split                    Reuse existing temp/ contents. Not with --source.
+ *   --skip-split                    Reuse the set files in <tempDir>/sets/. Not with --source.
  *   --verbose                       Verbose Style Dictionary logging.
  */
 
@@ -1255,7 +1283,7 @@ const exec = async (argv = []) => {
 			process.exit(1)
 		}
 	} else {
-		console.log('[design-tokens] --skip-split: reusing existing temp/ files')
+		console.log(`[design-tokens] --skip-split: reusing the set files in ${path.join(tempDir, 'sets')}`)
 	}
 
 	// Build into a fresh staging dir, then swap it in: removed tokens / renamed
@@ -1559,7 +1587,7 @@ design-tokens/
 │   └── watch.mjs                     # `pnpm build:watch` (fs.watch, watch list from token-config.js)
 ├── tokens/                           # Tokens Studio source files
 │   └── primitive-design-tokens.json  # Default primitive palette
-├── temp/                             # Per-set intermediate files (package .gitignore)
+├── temp/                             # Split sets (sets/), build staging, build lock (package .gitignore)
 ├── dist/                             # Build outputs (package .gitignore)
 ├── token-config.js                   # User-editable build config
 ├── tsconfig.json
@@ -1634,7 +1662,7 @@ pnpm clean
 | Flag            | Effect                                                            |
 | --------------- | ----------------------------------------------------------------- |
 | `--source=PATH` | Override `inputFiles[0]` with this path, absolute or relative to where you run `pnpm`. Needs the `=`; the shell does not expand `~` after it, so use `$HOME`. |
-| `--skip-split`  | Reuse existing `temp/` contents (rapid rebuild during iteration). Not with `--source`. |
+| `--skip-split`  | Reuse the set files in `temp/sets/` (rapid rebuild during iteration). Not with `--source`. |
 | `--verbose`     | Verbose Style Dictionary logging, e.g. to name broken references. |
 
 ## Tokens Studio integration
