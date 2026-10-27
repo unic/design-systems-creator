@@ -696,8 +696,8 @@ function acquireBuildLock(tempDir) {
 	process.on('exit', () => {
 		if (readPid(pidFile) === process.pid) rmSync(lockDir, { recursive: true, force: true })
 	})
-	// Node skips `exit` handlers on an unhandled signal (e.g. Ctrl+C).
-	for (const signal of ['SIGINT', 'SIGTERM']) {
+	// Node skips `exit` handlers on an unhandled signal (Ctrl+C, a closed terminal).
+	for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 		process.once(signal, () => process.exit(128 + constants.signals[signal]))
 	}
 }
@@ -1037,10 +1037,11 @@ EOF
  * `scripts/` changes. One build runs at a time; changes during a build queue
  * one more build, so the last build sees the latest files. The watch list is
  * read once at start: restart after changing `inputFiles`, a path key, or
- * adding a file to `lib/` or `scripts/`. When another build holds the lock,
+ * adding a file to `lib/` or `scripts/`, and after editing this file. When
+ * another build holds the lock,
  * the watcher retries, backing off to 10 seconds, until its build runs.
- * Symlinks on an input path (a token package in `node_modules/`) are watched
- * too, so `pnpm update` rebuilds. On Linux, a watched folder that
+ * Every symlink on the way to an input (the file itself, a token package in
+ * `node_modules/`) is watched too, so repointing it or `pnpm update` rebuilds. On Linux, a watched folder that
  * is deleted and recreated (e.g. by `git checkout`) needs a restart.
  *
  * Uses `fs.watch` on the folder of each file and filters by file name. There
@@ -1049,7 +1050,7 @@ EOF
  */
 
 import { spawn } from 'node:child_process'
-import { lstatSync, readdirSync, realpathSync, watch } from 'node:fs'
+import { lstatSync, readdirSync, readlinkSync, realpathSync, watch } from 'node:fs'
 import { constants } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1081,9 +1082,37 @@ try {
 	process.exit(1)
 }
 
+/** Stop following a symlink chain after this many links (a loop). */
+const MAX_LINKS = 40
+
+/**
+ * Every symlink between `start` and its final target: on its own path and on
+ * the path of each link target.
+ * @param {string} start
+ * @returns {string[]}
+ */
+function symlinksOn(start) {
+	const links = []
+	const pending = [path.resolve(start)]
+	while (pending.length > 0 && links.length < MAX_LINKS) {
+		const target = pending.pop()
+		for (let link = target; link !== path.dirname(link); link = path.dirname(link)) {
+			let isLink = false
+			try {
+				isLink = lstatSync(link).isSymbolicLink()
+			} catch {}
+			if (!isLink || links.includes(link)) continue
+			links.push(link)
+			pending.push(path.resolve(path.dirname(link), readlinkSync(link)))
+		}
+	}
+	return links
+}
+
+// watch.mjs itself is left out: a change to it needs a restart, not a build.
 const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
 	readdirSync(path.join(PACKAGE_ROOT, dir))
-		.filter((file) => file.endsWith('.mjs'))
+		.filter((file) => file.endsWith('.mjs') && file !== 'watch.mjs')
 		.map((file) => path.join(PACKAGE_ROOT, dir, file)),
 )
 const configuredFiles = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles]
@@ -1096,15 +1125,10 @@ const files = configuredFiles.map((file) => {
 		return file
 	}
 })
-// A symlink on the configured path (e.g. `node_modules/@acme/tokens` after
-// `pnpm update`) can point somewhere new: watch it in its parent folder too.
-for (const file of configuredFiles) {
-	for (let link = path.dirname(file); link !== path.dirname(link); link = path.dirname(link)) {
-		try {
-			if (lstatSync(link).isSymbolicLink()) files.push(link)
-		} catch {}
-	}
-}
+// A symlink anywhere on the way to an input (the file itself, a token package
+// in `node_modules/` after `pnpm update`, or a link inside a link target) can
+// point somewhere new: watch each one in its parent folder too.
+for (const file of configuredFiles) files.push(...symlinksOn(file))
 
 let isBuilding = false
 let isQueued = false
@@ -1133,6 +1157,8 @@ function build() {
 		// Another build (e.g. a manual `pnpm build`) holds the lock: this change
 		// is not built yet, so try again rather than wait for the next save.
 		if (code === LOCK_BUSY_EXIT_CODE) {
+			// The retry builds the latest files, so a queued change is covered.
+			isQueued = false
 			retryTimer = setTimeout(build, retryMs)
 			retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)
 			return
@@ -1145,7 +1171,7 @@ function build() {
 }
 
 // Stop a running build with the watcher, so it does not keep the lock.
-for (const signal of ['SIGINT', 'SIGTERM']) {
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 	process.once(signal, () => {
 		child?.kill(signal)
 		process.exit(128 + constants.signals[signal])
@@ -1165,7 +1191,11 @@ for (const [folder, names] of namesByFolder) {
 		watcher = watch(folder, (_eventType, name) => {
 			if (name !== null && !names.has(name)) return
 			clearTimeout(settleTimer)
-			settleTimer = setTimeout(build, SETTLE_MS)
+			settleTimer = setTimeout(() => {
+				// A save starts a fresh build: retry quickly again if it is busy.
+				retryMs = RETRY_MS
+				build()
+			}, SETTLE_MS)
 		})
 	} catch (error) {
 		console.error(`[design-tokens] cannot watch ${folder}: ${error.message}`)
@@ -1206,6 +1236,7 @@ EOF
  *   --verbose                       Verbose Style Dictionary logging.
  */
 
+import { readdirSync, writeFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1242,6 +1273,27 @@ function parseArgs(argv) {
 	return out
 }
 
+/** Marks a folder the build wrote, so it never replaces one it did not. */
+const BUILD_MARKER = '.design-tokens-build'
+
+/**
+ * The build replaces buildPathPrefix. Refuse a folder that holds files
+ * without the marker of an earlier build, e.g. an app's styles folder.
+ * @param {string} dir
+ */
+function assertBuildOwns(dir) {
+	let entries
+	try {
+		entries = readdirSync(dir)
+	} catch (error) {
+		if (error.code === 'ENOENT') return
+		throw error
+	}
+	if (entries.length > 0 && !entries.includes(BUILD_MARKER)) {
+		throw new Error(`buildPathPrefix ${dir} holds files the build did not write, and the build replaces that folder. Point buildPathPrefix at a folder of its own, or empty it first.`)
+	}
+}
+
 const exec = async (argv = []) => {
 	console.log('[design-tokens] build started')
 
@@ -1269,6 +1321,7 @@ const exec = async (argv = []) => {
 
 	try {
 		acquireBuildLock(tempDir)
+		assertBuildOwns(buildPathPrefix)
 	} catch (error) {
 		console.error(`\n[design-tokens] ${error.message}`)
 		process.exit(error.code === LOCK_BUSY ? LOCK_BUSY_EXIT_CODE : 1)
@@ -1299,6 +1352,7 @@ const exec = async (argv = []) => {
 		process.exit(1)
 	}
 	try {
+		writeFileSync(path.join(stagingPath, BUILD_MARKER), 'Written by @repo/design-tokens. The build replaces this folder.\n')
 		// `cp` rather than `rename`: works across devices.
 		await fs.rm(buildPathPrefix, { recursive: true, force: true })
 		await fs.cp(stagingPath, buildPathPrefix, { recursive: true })
@@ -1331,8 +1385,9 @@ EOF
  * `tempDir`) default to `tokens/`, `dist/` and `temp/` and resolve against
  * the package folder; `pnpm clean` only removes the defaults. `tempDir` and
  * `buildPathPrefix` must not be inside each other or hold package files or
- * token sources. The build deletes and recreates `buildPathPrefix`
- * on every run, so point it only at a folder the build owns. The package
+ * token sources. The build replaces `buildPathPrefix` after each successful
+ * run and refuses a non-empty folder it did not write, so point it at a
+ * folder of its own. The package
  * `exports` assume `dist/`; update them if you move it.
  */
 
