@@ -587,7 +587,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:f
 import { constants } from 'node:os'
 import path from 'node:path'
 
-/** A lock without a pid younger than this may still be starting up. */
+/** A lock without a pid, or a recovery guard, younger than this may still be in use. */
 const STARTUP_GRACE_MS = 10_000
 
 /** @param {number} pid */
@@ -635,9 +635,10 @@ const busyError = (lockDir, pid) =>
 	new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
 
 /**
- * Replace a stale lock. Runs under `<lockDir>.recover`, so two processes
- * never recover the same lock at once, and rechecks the lock under that
- * guard because another process may have taken it in between.
+ * Replace a stale lock. Runs under `<lockDir>.recover`, so two processes do
+ * not recover the same lock at once (a guard older than `STARTUP_GRACE_MS`
+ * counts as abandoned), and rechecks the lock under that guard because
+ * another process may have taken it in between.
  * @param {string} lockDir
  * @returns {void}
  */
@@ -783,9 +784,12 @@ async function buildBrands(brands, options) {
 		// (e.g. token collisions) reject here instead of as an unhandled rejection.
 		const sd = new StyleDictionary(
 			{
-				// Style Dictionary reads `source` entries as globs: escape set names
-				// and paths such as `[Brand] A`.
-				source: sourceFiles.map((file) => file.split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&')),
+				// Style Dictionary reads `source` entries as globs (escape `[Brand] A`)
+				// and keeps the path on each token, where a `{…}` folder name would be
+				// read as a token reference: pass paths relative to the working folder.
+				source: sourceFiles.map((file) =>
+					path.relative(process.cwd(), file).split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&'),
+				),
 				preprocessors: ['tokens-studio', 'line-height-relative', 'comment-safe-descriptions'],
 				// One variable per property: the CSS `font` shorthand cannot hold
 				// `letterSpacing` and friends, and composition has no CSS form.
@@ -821,6 +825,7 @@ EOF
  * Tokens Studio metadata and any user-excluded set) becomes one file holding
  * the set contents without the set-name wrapper. Slashes in the set name
  * become underscores (so `Theme/Brand Light` → `Theme_Brand Light.json`).
+ * Empty sets are skipped and produce no file.
  *
  * Adapted from https://github.com/orioltf/poc-tokens — same shape, smaller
  * surface area.
@@ -1053,7 +1058,7 @@ const matches = [...configManager.getInputFilePaths(), 'token-config.js', ...eng
 onchange({
 	cwd: PACKAGE_ROOT,
 	matches,
-	// The build writes tempDir and buildPathPrefix: watching them would rebuild forever.
+	// An input file inside tempDir or buildPathPrefix would be rewritten by every build.
 	exclude: [(file) => isUnder(file, tempDir) || isUnder(file, buildPathPrefix)],
 	initial: true,
 	command: ['pnpm', 'build'],
@@ -1522,7 +1527,7 @@ import { colorPrimary500 } from "@repo/design-tokens";
 # Full pipeline: split + per-brand Style Dictionary build
 pnpm build
 
-# Build, then rebuild on changes to the inputFiles, token-config.js, lib/, scripts/ (one build at a time; restart after changing inputFiles or a path key in token-config.js)
+# Build, then rebuild on changes to the inputFiles, token-config.js and the .mjs files in lib/ and scripts/ (one build at a time; restart after changing inputFiles, a path key, or adding a file to lib/ or scripts/)
 pnpm build:watch
 
 # Run just the splitter (debugging)
