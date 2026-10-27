@@ -4,15 +4,14 @@
 # Design tokens regression check
 # =============================================================================
 # Generates the design tokens build pipeline and sample into a temp folder,
-# builds the sample and the fixtures in tests/fixtures/design-tokens/, checks
-# CSS output (including every variable the Storybook stories use), builds two
-# brands and from the repo root, and checks that colliding themes, mixed formats, sets or brands that
-# differ only in case, values without a CSS form, unsafe build paths or brand
-# names and an overlapping build fail, and that a stale lock is taken over
-# and released. Runs in a folder named `[ds] {work}` to cover glob and reference characters.
-# Pins style-dictionary@5 and @tokens-studio/sd-transforms@2; generated repos
-# resolve the latest versions through the catalog. Needs network for
-# `pnpm add`.
+# builds the sample and the fixtures in tests/fixtures/design-tokens/ and
+# checks the CSS output, including every variable the Storybook stories use.
+# Also builds two brands and builds from the repo root, checks that invalid
+# sets, formats, brands, values and build paths fail with a message, and
+# checks the build lock. Runs in a folder named `[ds] {work}` to cover glob
+# and reference characters. Pins style-dictionary@5 and
+# @tokens-studio/sd-transforms@2; generated repos resolve the latest versions
+# through the catalog. Needs network for `pnpm add`.
 
 set -euo pipefail
 
@@ -185,6 +184,12 @@ sed -i.bak "s|brands: \['a', 'Acme', 'acme'\],|brands: ['brandName'],|" "$PACKAG
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
 echo "$$" >"$PACKAGE_DIR/temp/.build-lock/pid"
 expect_build_failure "overlapping build" "Another build (pid $$)"
+if (cd "$PACKAGE_DIR" && node scripts/build-style-dictionary.mjs >/dev/null 2>&1); then :; else
+	if [[ $? -eq 75 ]]; then echo "ok    a busy lock exits with 75"; else
+		echo "FAIL  a busy lock should exit with 75"
+		FAILURES=$((FAILURES + 1))
+	fi
+fi
 
 sleep 0 &
 DEAD_PID=$!
