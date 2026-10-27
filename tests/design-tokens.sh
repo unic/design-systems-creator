@@ -9,7 +9,7 @@
 # brands, and checks that colliding themes, mixed formats, sets or brands that
 # differ only in case, values without a CSS form, unsafe build paths or brand
 # names and an overlapping build fail, and that a stale lock is taken over
-# and released. Runs in a folder named `[ds] work` to cover glob characters.
+# and released. Runs in a folder named `[ds] {work}` to cover glob and reference characters.
 # Pins style-dictionary@5 and @tokens-studio/sd-transforms@2; generated repos
 # resolve the latest versions through the catalog. Needs network for
 # `pnpm add`.
@@ -20,8 +20,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURES_DIR="$ROOT_DIR/tests/fixtures/design-tokens"
 TEMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEMP_ROOT"' EXIT
-# Glob characters in the path: Style Dictionary reads source paths as globs.
-WORK_DIR="$TEMP_ROOT/[ds] work"
+# Style Dictionary reads source paths as globs and `{…}` as token references.
+WORK_DIR="$TEMP_ROOT/[ds] {work}"
 mkdir -p "$WORK_DIR"
 
 # shellcheck disable=SC1091
