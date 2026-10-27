@@ -1,0 +1,13 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "Brand/{Beta}"
+    ]
+  },
+  "Brand/{Beta}": {
+    "bg": {
+      "$value": "#fff",
+      "$type": "color"
+    }
+  }
+}

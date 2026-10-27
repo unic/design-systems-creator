@@ -98,6 +98,15 @@ done <<<"$STORYBOOK_VARIABLES"
 expect_css tokens.css "--semantic-accent-default: var(--color-primary-500);"
 expect_css tailwind-theme.css "--semantic-accent-default: #3b82f6;"
 
+# From the repo root, as a script without pnpm would run it.
+rm -rf "$PACKAGE_DIR/dist"
+if (cd "$WORK_DIR" && node packages/design-tokens/scripts/build-style-dictionary.mjs >/dev/null 2>&1); then
+	expect_css tokens.css "--semantic-accent-default: var(--color-primary-500);"
+else
+	echo "FAIL  build from the repo root"
+	FAILURES=$((FAILURES + 1))
+fi
+
 build_with_inputs "'legacy.json'"
 expect_css tokens.css "--line-heights-relaxed: 1.5;"
 expect_css tokens.css "--line-heights-body: var(--line-heights-relaxed);"
@@ -141,6 +150,9 @@ expect_build_failure "mixed DTCG and legacy inputs" "Export all inputFiles in on
 
 set_inputs "'mixed.json'"
 expect_build_failure "mixed formats in one export" "mixes DTCG \$value/\$type and legacy value/type tokens"
+
+set_inputs "'braces.json'"
+expect_build_failure "braces in a set name" "are not allowed in set names"
 
 set_inputs "'case.json'"
 expect_build_failure "sets that differ only in case" "both map to"
