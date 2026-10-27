@@ -494,9 +494,9 @@ class ConfigManager {
 	}
 
 	/**
-	 * The build replaces buildPathPrefix and deletes the *.json files,
-	 * `dist-staging/` and `.build-lock/` in tempDir, so neither may hold the package, its build engine, or any
-	 * source file. Paths are compared canonically (symlinks, and case on
+	 * The build replaces buildPathPrefix and owns `sets/`, `dist-staging/`
+	 * and `.build-lock/` in tempDir, so neither may hold the package, its
+	 * build engine, or any source file. Paths are compared canonically (symlinks, and case on
 	 * case-insensitive file systems such as macOS).
 	 * @returns {void}
 	 */
@@ -507,7 +507,7 @@ class ConfigManager {
 		const buildPathPrefix = toCanonical(this.config.buildPathPrefix)
 		const tempDir = toCanonical(this.config.tempDir)
 		if (/[{}]/.test(path.relative(PACKAGE_ROOT, tempDir))) {
-			throw new Error(`tempDir must not be inside a folder whose name has "{" or "}": Style Dictionary reads them as references (${tempDir}).`)
+			throw new Error(`tempDir must not have "{" or "}" in its path relative to the package: Style Dictionary reads them as references (${tempDir}).`)
 		}
 		if (isInside(tempDir, buildPathPrefix)) {
 			throw new Error('tempDir must not be inside buildPathPrefix: the build replaces buildPathPrefix.')
@@ -539,7 +539,8 @@ class ConfigManager {
 			excludeKeys,
 			includeKeys,
 			inputFiles: this.getInputFilePaths(),
-			outputDir: this.config.tempDir,
+			// A folder of its own: the splitter removes old *.json files there.
+			outputDir: path.join(this.config.tempDir, 'sets'),
 		}
 	}
 
@@ -593,6 +594,11 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:f
 import { constants } from 'node:os'
 import path from 'node:path'
 
+/** Error code of a lock held by another build. */
+export const LOCK_BUSY = 'ELOCKBUSY'
+/** Exit code for a build that could not take the lock (EX_TEMPFAIL): try again later. */
+export const LOCK_BUSY_EXIT_CODE = 75
+
 /** A lock without a pid, or a recovery guard, younger than this may still be in use. */
 const STARTUP_GRACE_MS = 10_000
 
@@ -638,7 +644,9 @@ const ageOf = (dir) => {
 
 /** @param {string} lockDir @param {number} pid */
 const busyError = (lockDir, pid) =>
-	new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`)
+	Object.assign(new Error(`Another build (pid ${pid > 0 ? pid : 'unknown'}) holds ${lockDir}. Wait for it to finish, or remove the folder if no build is running.`), {
+		code: LOCK_BUSY,
+	})
 
 /**
  * Replace a stale lock. Runs under `<lockDir>.recover`, so two processes do
@@ -651,7 +659,7 @@ const busyError = (lockDir, pid) =>
 function takeOverStaleLock(lockDir) {
 	const guardDir = `${lockDir}.recover`
 	const pidFile = path.join(lockDir, 'pid')
-	const recoveringError = new Error(`Another build is taking over a stale lock in ${lockDir}. Run the build again.`)
+	const recoveringError = Object.assign(new Error(`Another build is taking over a stale lock in ${lockDir}. Run the build again.`), { code: LOCK_BUSY })
 	if (!tryCreate(guardDir)) {
 		if (ageOf(guardDir) < STARTUP_GRACE_MS) throw recoveringError
 		rmSync(guardDir, { recursive: true, force: true })
@@ -751,21 +759,22 @@ const TYPES_MAP = {
  */
 function resolveSourceFiles(brand, options) {
 	const subset = options.brandSets?.[brand]
-	const available = existsSync(options.tempDir) ? readdirSync(options.tempDir).filter((file) => file.endsWith('.json')) : []
+	const setsDir = path.join(options.tempDir, 'sets')
+	const available = existsSync(setsDir) ? readdirSync(setsDir).filter((file) => file.endsWith('.json')) : []
 
 	if (available.length === 0) {
-		throw new Error(`No set files in ${options.tempDir}. Run the build without --skip-split.`)
+		throw new Error(`No set files in ${setsDir}. Run the build without --skip-split.`)
 	}
 
 	if (!subset || subset.length === 0) {
-		return available.map((file) => path.join(options.tempDir, file))
+		return available.map((file) => path.join(setsDir, file))
 	}
 
 	const missing = subset.filter((name) => !available.includes(`${name}.json`))
 	if (missing.length > 0) {
 		throw new Error(`brandSets[${brand}] lists unknown, empty or filtered set(s): ${missing.join(', ')}. The splitter skips empty sets and sets removed by includeKeys/excludeKeys. Available: ${available.map((file) => path.basename(file, '.json')).join(', ')}`)
 	}
-	return subset.map((name) => path.join(options.tempDir, `${name}.json`))
+	return subset.map((name) => path.join(setsDir, `${name}.json`))
 }
 
 /**
@@ -794,7 +803,7 @@ async function buildBrands(brands, options) {
 				// and keeps the path on each token, where a `{…}` folder name would be
 				// read as a token reference. The build runs from the package folder,
 				// so relative paths leave out the folders above it; validatePaths()
-				// rejects a tempDir outside the package under a `{…}` folder.
+				// rejects a tempDir whose path relative to the package has `{` or `}`.
 				source: sourceFiles.map((file) =>
 					path.relative(process.cwd(), file).split(path.sep).join('/').replace(/[*?[\]{}()!]/g, '\\$&'),
 				),
@@ -959,7 +968,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 		}
 		// The set name becomes a file name: refuse what Windows cannot store or
 		// what would leave the temp folder (`..\package`).
-		if (/[\\<>:"|?*\u0000-\u001f]/.test(key) || /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(key.replace(/\//g, '_'))) {
+		if (/[\\<>:"|?*\u0000-\u001f]/.test(key) || /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(key.replace(/\//g, '_'))) {
 			throw new Error(`Set "${key}" cannot be a file name on every system. Avoid \\ < > : " | ? * and names such as CON or NUL; rename the set in Tokens Studio.`)
 		}
 		const filename = `${key.replace(/\//g, '_')}.json`
@@ -1002,7 +1011,7 @@ async function splitDesignTokens({ excludeKeys = [], includeKeys = [], inputFile
 // Compare filesystem paths: `import.meta.url` is URL-encoded and symlink-resolved.
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
 	const { default: ConfigManager } = await import('../lib/configManager.mjs')
-	const { default: acquireBuildLock } = await import('../lib/buildLock.mjs')
+	const { default: acquireBuildLock, LOCK_BUSY, LOCK_BUSY_EXIT_CODE } = await import('../lib/buildLock.mjs')
 	const configManager = new ConfigManager()
 	try {
 		await configManager.loadFromFile()
@@ -1012,7 +1021,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.a
 		console.log('\n[split] done.')
 	} catch (error) {
 		console.error(`\n[split] failed: ${error.message}`)
-		process.exit(1)
+		process.exit(error.code === LOCK_BUSY ? LOCK_BUSY_EXIT_CODE : 1)
 	}
 }
 
@@ -1022,12 +1031,14 @@ EOF
 	cat >scripts/watch.mjs <<'EOF'
 /**
  * @fileoverview
- * `pnpm build:watch`: runs `pnpm build` once, then again when one of the
+ * `pnpm build:watch`: runs the build once, then again when one of the
  * configured input files, `token-config.js` or a `.mjs` file in `lib/` or
  * `scripts/` changes. One build runs at a time; changes during a build queue
  * one more build, so the last build sees the latest files. The watch list is
  * read once at start: restart after changing `inputFiles`, a path key, or
- * adding a file to `lib/` or `scripts/`.
+ * adding a file to `lib/` or `scripts/`. When another build holds the lock,
+ * the watcher retries until its build runs. On Linux, a watched folder that
+ * is deleted and recreated (e.g. by `git checkout`) needs a restart.
  *
  * Uses `fs.watch` on the folder of each file and filters by file name. There
  * is no glob handling, so `[`, `{` or `node_modules/` in a path are safe, and
@@ -1035,15 +1046,20 @@ EOF
  */
 
 import { spawn } from 'node:child_process'
-import { readdirSync, watch } from 'node:fs'
+import { readdirSync, realpathSync, watch } from 'node:fs'
+import { constants } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { LOCK_BUSY_EXIT_CODE } from '../lib/buildLock.mjs'
 import ConfigManager from '../lib/configManager.mjs'
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const BUILD_SCRIPT = path.join(PACKAGE_ROOT, 'scripts', 'build-style-dictionary.mjs')
 /** Editors write a file in several steps: wait this long for them to settle. */
 const SETTLE_MS = 100
+/** Another build holds the lock: try again after this long. */
+const RETRY_MS = 1000
 
 const configManager = new ConfigManager()
 try {
@@ -1059,11 +1075,20 @@ const engineFiles = ['lib', 'scripts'].flatMap((dir) =>
 		.filter((file) => file.endsWith('.mjs'))
 		.map((file) => path.join(PACKAGE_ROOT, dir, file)),
 )
-const files = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles]
+// fs.watch reports the names on disk: resolve letter case and file symlinks
+// (an edit lands in the link target's folder). A missing file keeps its path.
+const files = [...configManager.getInputFilePaths(), path.join(PACKAGE_ROOT, 'token-config.js'), ...engineFiles].map((file) => {
+	try {
+		return realpathSync.native(file)
+	} catch {
+		return file
+	}
+})
 
 let isBuilding = false
 let isQueued = false
 let settleTimer
+let child
 
 function build() {
 	if (isBuilding) {
@@ -1071,17 +1096,31 @@ function build() {
 		return
 	}
 	isBuilding = true
-	// `shell` on Windows so `pnpm.cmd` resolves; the arguments are fixed.
-	const child = spawn('pnpm', ['build'], { cwd: PACKAGE_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
+	child = spawn(process.execPath, [BUILD_SCRIPT], { cwd: PACKAGE_ROOT, stdio: 'inherit' })
 	child.on('error', (error) => {
-		console.error(`[design-tokens] could not start pnpm build: ${error.message}`)
+		console.error(`[design-tokens] could not start the build: ${error.message}`)
 		process.exit(1)
 	})
-	child.on('exit', () => {
+	child.on('exit', (code) => {
 		isBuilding = false
+		child = undefined
+		// Another build (e.g. a manual `pnpm build`) holds the lock: this change
+		// is not built yet, so try again rather than wait for the next save.
+		if (code === LOCK_BUSY_EXIT_CODE) {
+			setTimeout(build, RETRY_MS)
+			return
+		}
 		if (!isQueued) return
 		isQueued = false
 		build()
+	})
+}
+
+// Stop a running build with the watcher, so it does not keep the lock.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+	process.once(signal, () => {
+		child?.kill(signal)
+		process.exit(128 + constants.signals[signal])
 	})
 }
 
@@ -1122,15 +1161,16 @@ EOF
  * Pipeline:
  *   1. Load the package's `token-config.js` (defaults apply only when the
  *      file is absent).
- *   2. Split the configured `inputFiles` into per-set files in `temp/`.
+ *   2. Split the configured `inputFiles` into per-set files in `<tempDir>/sets/`.
  *   3. For each configured brand, run Style Dictionary against the relevant
  *      set files for the configured platforms, into `<tempDir>/dist-staging/`.
  *   4. Replace `dist/` with the staging directory. A failed Style Dictionary
  *      build leaves the previous `dist/` in place.
  *
- * One build at a time: `temp/.build-lock` (lib/buildLock.mjs) makes an
- * overlapping build or split fail. `pnpm build:watch` runs one build at a
- * time, so the last run sees the latest files.
+ * One build at a time: `<tempDir>/.build-lock` (lib/buildLock.mjs) makes an
+ * overlapping build or split fail, with exit code 75. `pnpm build:watch`
+ * queues one more build for changes made during a build, so the last run
+ * sees the latest files.
  *
  * CLI flags (optional; unknown flags fail):
  *   --source=path/to/tokens.json    Replace `inputFiles[0]`; other inputs stay.
@@ -1142,7 +1182,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import acquireBuildLock from '../lib/buildLock.mjs'
+import acquireBuildLock, { LOCK_BUSY, LOCK_BUSY_EXIT_CODE } from '../lib/buildLock.mjs'
 import buildBrands from '../lib/buildBrands.mjs'
 import ConfigManager from '../lib/configManager.mjs'
 import registerTransforms from '../lib/registerTransforms.mjs'
@@ -1203,7 +1243,7 @@ const exec = async (argv = []) => {
 		acquireBuildLock(tempDir)
 	} catch (error) {
 		console.error(`\n[design-tokens] ${error.message}`)
-		process.exit(1)
+		process.exit(error.code === LOCK_BUSY ? LOCK_BUSY_EXIT_CODE : 1)
 	}
 
 	if (!cli.skipSplit) {
@@ -1498,7 +1538,7 @@ Design tokens for the Design System, built with [Style Dictionary](https://style
 
 The build runs in two stages:
 
-1. **Split** — `scripts/split-design-tokens.mjs` reads one or more Tokens Studio JSON exports, merges their top-level "sets", and writes each set to its own file in `temp/`.
+1. **Split** — `scripts/split-design-tokens.mjs` reads one or more Tokens Studio JSON exports, merges their top-level "sets", and writes each set to its own file in `temp/sets/`.
 2. **Build** — `scripts/build-style-dictionary.mjs` invokes Style Dictionary once per configured brand, using the appropriate set files for that brand, and emits outputs to `dist/`.
 
 The pipeline uses the [`@tokens-studio/sd-transforms`](https://github.com/tokens-studio/sd-transforms) preprocessor. The splitter already removes each set-name wrapper, so token paths start at the first group inside a set (`color.neutral.50` → `--color-neutral-50`). Tailwind v4 `@theme` is the primary runtime contract; plain CSS variables are also emitted, and a JS/TS output platform is available but disabled by default.
