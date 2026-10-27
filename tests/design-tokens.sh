@@ -8,7 +8,9 @@
 # checks the CSS output, including every variable the Storybook stories use.
 # Also builds two brands and builds from the repo root, checks that invalid
 # sets, formats, brands, values and build paths fail with a message, and
-# checks the build lock. Runs in a folder named `[ds] {work}` to cover glob
+# checks the build lock (busy exit code 75, stale lock takeover), that the
+# build refuses an output folder it did not write, and that build:watch
+# refuses flags. Runs in a folder named `[ds] {work}` to cover glob
 # and reference characters. Pins style-dictionary@5 and
 # @tokens-studio/sd-transforms@2; generated repos resolve the latest versions
 # through the catalog. Needs network for `pnpm add`.
@@ -181,11 +183,28 @@ sed -i.bak "s|brands: \['a', '../../tokens'\],|brands: ['a', 'Acme', 'acme'],|" 
 expect_build_failure "brands that differ only in case" "differ only in case"
 sed -i.bak "s|brands: \['a', 'Acme', 'acme'\],|brands: ['brandName'],|" "$PACKAGE_DIR/token-config.js"
 
-if (cd "$PACKAGE_DIR" && node scripts/watch.mjs --source=tokens/legacy.json >/dev/null 2>&1); then
+# In the background with a kill after 2 s: a watcher that accepts the flag
+# would otherwise run until the test is stopped.
+(cd "$PACKAGE_DIR" && node scripts/watch.mjs --source=tokens/legacy.json >"$WORK_DIR/watch.log" 2>&1) &
+WATCH_PID=$!
+sleep 2
+kill "$WATCH_PID" 2>/dev/null || true
+wait "$WATCH_PID" 2>/dev/null || true
+if grep -qF "takes no flags" "$WORK_DIR/watch.log"; then
+	echo "ok    build:watch refuses flags"
+else
 	echo "FAIL  build:watch should refuse flags"
 	FAILURES=$((FAILURES + 1))
-else
-	echo "ok    build:watch refuses flags"
+fi
+
+mkdir -p "$WORK_DIR/shared-styles"
+echo "keep me" >"$WORK_DIR/shared-styles/globals.css"
+sed -i.bak "s|brandSets: {},|brandSets: {}, buildPathPrefix: '../../shared-styles',|" "$PACKAGE_DIR/token-config.js"
+expect_build_failure "build path over a folder the build did not write" "holds files the build did not write"
+sed -i.bak "s|brandSets: {}, buildPathPrefix: '../../shared-styles',|brandSets: {},|" "$PACKAGE_DIR/token-config.js"
+if [[ -f "$WORK_DIR/shared-styles/globals.css" ]]; then echo "ok    shared folder kept"; else
+	echo "FAIL  shared folder lost globals.css"
+	FAILURES=$((FAILURES + 1))
 fi
 
 mkdir -p "$PACKAGE_DIR/temp/.build-lock"
