@@ -1,0 +1,20 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "Core",
+      "core"
+    ]
+  },
+  "Core": {
+    "a": {
+      "$value": "#fff",
+      "$type": "color"
+    }
+  },
+  "core": {
+    "b": {
+      "$value": "#000",
+      "$type": "color"
+    }
+  }
+}

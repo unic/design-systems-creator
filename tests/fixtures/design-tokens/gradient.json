@@ -1,0 +1,22 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "core"
+    ]
+  },
+  "core": {
+    "fade": {
+      "$value": [
+        {
+          "color": "#ffffff",
+          "position": 0
+        },
+        {
+          "color": "#000000",
+          "position": 1
+        }
+      ],
+      "$type": "gradient"
+    }
+  }
+}

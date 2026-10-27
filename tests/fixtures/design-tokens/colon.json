@@ -1,0 +1,13 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "Mode:Dark"
+    ]
+  },
+  "Mode:Dark": {
+    "bg": {
+      "$value": "#000",
+      "$type": "color"
+    }
+  }
+}

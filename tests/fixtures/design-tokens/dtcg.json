@@ -1,0 +1,65 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "core"
+    ]
+  },
+  "core": {
+    "scale": {
+      "leading": {
+        "$value": 1.5,
+        "$type": "number"
+      },
+      "tracking": {
+        "$value": -0.5,
+        "$type": "number"
+      }
+    },
+    "heading": {
+      "$value": {
+        "fontFamily": "Inter",
+        "fontWeight": "Bold",
+        "fontSize": "24px",
+        "lineHeight": "{scale.leading}",
+        "letterSpacing": "{scale.tracking}"
+      },
+      "$type": "typography"
+    },
+    "leading": {
+      "direct": {
+        "$value": 1.5,
+        "$type": "lineHeights"
+      }
+    },
+    "subheading": {
+      "$value": "{heading}",
+      "$type": "typography"
+    },
+    "panel": {
+      "$value": {
+        "paddingTop": "8px",
+        "typography": "{subheading}"
+      },
+      "$type": "composition"
+    },
+    "value": {
+      "$value": 1.4,
+      "$type": "lineHeights"
+    },
+    "spacing": {
+      "value": {
+        "$value": "4px",
+        "$type": "spacing"
+      }
+    },
+    "note": {
+      "$value": "#123456",
+      "$type": "color",
+      "$description": "Use for borders */ and dividers"
+    },
+    "after": {
+      "$value": "#654321",
+      "$type": "color"
+    }
+  }
+}

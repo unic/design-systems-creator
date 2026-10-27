@@ -1,0 +1,24 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "Brand/A",
+      "Brand/B"
+    ]
+  },
+  "Brand/A": {
+    "lineHeights": {
+      "body": {
+        "$value": "150%",
+        "$type": "lineHeights"
+      }
+    }
+  },
+  "Brand/B": {
+    "lineHeights": {
+      "body": {
+        "$value": "24",
+        "$type": "lineHeights"
+      }
+    }
+  }
+}

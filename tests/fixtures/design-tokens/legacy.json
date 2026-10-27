@@ -1,0 +1,101 @@
+{
+  "$metadata": {
+    "tokenSetOrder": [
+      "core"
+    ]
+  },
+  "$themes": [],
+  "core": {
+    "number": {
+      "base": {
+        "value": "16",
+        "type": "number"
+      },
+      "line": {
+        "value": "{number.base} * 1.5",
+        "type": "number"
+      }
+    },
+    "lineHeights": {
+      "relaxed": {
+        "value": "150%",
+        "type": "lineHeights"
+      },
+      "body": {
+        "value": "{lineHeights.relaxed}",
+        "type": "lineHeights"
+      },
+      "fixed": {
+        "value": "24",
+        "type": "lineHeights"
+      },
+      "math": {
+        "value": "{number.base} * 1.5",
+        "type": "lineHeights"
+      },
+      "auto": {
+        "value": "AUTO",
+        "type": "lineHeights"
+      },
+      "computed": {
+        "value": "{number.line}",
+        "type": "lineHeights"
+      }
+    },
+    "letterSpacing": {
+      "tight": {
+        "value": "-0.5",
+        "type": "letterSpacing"
+      },
+      "wide": {
+        "value": "5%",
+        "type": "letterSpacing"
+      }
+    },
+    "spacing": {
+      "multi": {
+        "value": "8 16",
+        "type": "spacing"
+      }
+    },
+    "typography": {
+      "body": {
+        "value": {
+          "fontFamily": "Inter",
+          "fontWeight": "Regular",
+          "fontSize": "{number.base}",
+          "lineHeight": "{lineHeights.relaxed}",
+          "letterSpacing": "{number.base} * -0.02"
+        },
+        "type": "typography"
+      },
+      "heading": {
+        "value": {
+          "fontFamily": "Inter",
+          "fontWeight": "Bold",
+          "fontSize": "{number.base}",
+          "lineHeight": "{number.line}"
+        },
+        "type": "typography"
+      },
+      "paragraph": {
+        "value": "{typography.body}",
+        "type": "typography"
+      }
+    },
+    "card": {
+      "value": {
+        "paddingTop": "8 16",
+        "lineHeights": "24"
+      },
+      "type": "composition"
+    },
+    "panel": {
+      "value": {
+        "paddingTop": "8",
+        "typography": "{typography.body}"
+      },
+      "type": "composition"
+    }
+  }
+}
